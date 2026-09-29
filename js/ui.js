@@ -7,6 +7,10 @@
   const E = Engine;
   const B = D.BALANCE;
   const SAVE_KEY = 'island-farm-shop/save-v1';
+  // 안드로이드 앱(Capacitor) 안에서 실행 중인지. 앱은 https://localhost 에서 돈다.
+  const IS_APP = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform())
+    || (location.protocol === 'https:' && location.hostname === 'localhost');
+  const APK_URL = 'https://github.com/yeonny3209/island-farm-shop/releases/latest/download/island-farm-shop.apk';
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const fmt = (n) => Math.round(n).toLocaleString('ko-KR');
@@ -43,6 +47,11 @@
     openWarn: false,
     sleepWarn: false,
     selSlot: null,
+    skip: { days: 1, open: true, harvest: true },
+    savePending: null,
+    saveCode: '',
+    codeIn: '',
+    installPrompt: null,
     jarPick: {},
     seedQty: {},
     allSeeds: false,
@@ -59,20 +68,84 @@
   ];
   const DRAG_TOOLS = ['plant', 'water', 'harvest'];
 
-  // ---------- 저장 (하루가 끝날 때마다) ----------
+  // ---------- 저장 ----------
+  // 자동 저장: 하루가 끝날 때, 앱을 내리거나 닫을 때. 수동 저장: 슬롯 3개. 다른 기기로 옮길 때는 저장 코드.
+  const SLOT_COUNT = 3;
+  const slotKey = (n) => `island-farm-shop/slot-${n}`;
+
   function save() {
+    if (!S) return;
+    S.savedAt = Date.now();
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (err) { /* 저장소를 쓸 수 없는 환경 */ }
   }
-  function loadSave() {
+  function parseState(raw) {
     try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) return null;
-      const s = E.migrate(JSON.parse(raw));
+      const s = E.migrate(typeof raw === 'string' ? JSON.parse(raw) : raw);
       return E.isValidSave(s) ? s : null;
     } catch (err) { return null; }
   }
+  function loadSave() {
+    try { return parseState(localStorage.getItem(SAVE_KEY)); } catch (err) { return null; }
+  }
   function clearSave() {
     try { localStorage.removeItem(SAVE_KEY); } catch (err) { /* 무시 */ }
+  }
+  function readSlot(n) {
+    try {
+      const raw = localStorage.getItem(slotKey(n));
+      if (!raw) return null;
+      const box = JSON.parse(raw);
+      const state = parseState(box.state);
+      return state ? { savedAt: box.savedAt, state } : null;
+    } catch (err) { return null; }
+  }
+  function writeSlot(n) {
+    try {
+      localStorage.setItem(slotKey(n), JSON.stringify({ savedAt: Date.now(), state: S }));
+      return true;
+    } catch (err) { return false; }
+  }
+  function deleteSlot(n) {
+    try { localStorage.removeItem(slotKey(n)); } catch (err) { /* 무시 */ }
+  }
+
+  // 저장 코드: JSON → (가능하면 gzip) → base64. 앞머리로 형식을 구분한다.
+  const toB64 = (bytes) => { let bin = ''; bytes.forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); };
+  const fromB64 = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+  async function exportCode() {
+    const json = new TextEncoder().encode(JSON.stringify(S));
+    if (typeof CompressionStream === 'function') {
+      const gz = await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+      return 'ISF1G.' + toB64(new Uint8Array(gz));
+    }
+    return 'ISF1J.' + toB64(json);
+  }
+  async function importCode(code) {
+    const c = code.replace(/\s+/g, '');
+    const m = /^ISF1([GJ])\.(.+)$/.exec(c);
+    if (!m) return null;
+    try {
+      let bytes = fromB64(m[2]);
+      if (m[1] === 'G') {
+        if (typeof DecompressionStream !== 'function') return null;
+        bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+      }
+      return parseState(new TextDecoder().decode(bytes));
+    } catch (err) { return null; }
+  }
+
+  function describeState(s) {
+    const sz = D.SEASONS[E.seasonOf(s.day)];
+    const when = s.phase === 'night' ? '밤' : '낮';
+    return `${E.yearOf(s.day) > 1 ? `${E.yearOf(s.day)}년차 ` : ''}${sz.emoji} ${sz.name} ${E.dayInSeason(s.day)}일차 ${when} · ${s.day}일째`;
+  }
+  function timeAgo(t) {
+    if (!t) return '';
+    const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (sec < 60) return '방금';
+    if (sec < 3600) return `${Math.floor(sec / 60)}분 전`;
+    const d = new Date(t);
+    return `${d.getMonth() + 1}월 ${d.getDate()}일 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 
   // ---------- 알림 ----------
@@ -141,6 +214,8 @@
         <div class="bar energy ${S.energy < 25 ? 'low' : ''}"><i style="width:${(S.energy / B.maxEnergy) * 100}%"></i></div>
       </div></div>
       <div class="hud-menu">
+        <button class="icon-btn" data-act="saves" title="저장" aria-label="저장 관리">${emo('💾')}</button>
+        ${IS_APP ? '' : `<button class="icon-btn" data-act="install" title="앱으로 설치" aria-label="앱으로 설치">${emo('📲')}</button>`}
         <button class="icon-btn" data-act="help" title="도움말" aria-label="도움말">?</button>
         <button class="icon-btn" data-act="restart" title="처음부터 다시" aria-label="처음부터 다시">↺</button>
       </div>`;
@@ -466,9 +541,10 @@
     const warns = openWarnings(sum || E.farmSummary(S));
     const confirming = ui.openWarn && warns.length && !W.closed;
     let btns;
-    if (W.closed) btns = `<button class="btn big primary" data-act="open">${emo('🌙')} 휴업하고 하루 마치기</button>`;
+    const skipBtn = `<button class="btn" data-act="skip" title="날짜 건너뛰기">${emo('⏭️')} 건너뛰기</button>`;
+    if (W.closed) btns = `${skipBtn}<button class="btn big primary" data-act="open">${emo('🌙')} 휴업하고 하루 마치기</button>`;
     else if (confirming) btns = '<button class="btn" data-act="cancelOpen">돌아가기</button><button class="btn big primary" data-act="open">그래도 문 열기</button>';
-    else btns = `<button class="btn big primary" data-act="open">${emo('🏪')} 가게 문 열기</button>`;
+    else btns = `${skipBtn}<button class="btn big primary" data-act="open">${emo('🏪')} 가게 문 열기</button>`;
     bar.innerHTML = `<div class="actionbar-inner">
       <div class="info">
         ${confirming ? `<span class="warn">잠깐! ${warns.join(' · ')}</span>` : `<span>${emo(W.emoji)} ${W.name}${W.closed ? ' — 오늘은 가게를 열 수 없어요' : W.customers < 1 ? ' — 손님이 줄어요' : ''}</span>
@@ -736,7 +812,9 @@
     const season = D.SEASONS[E.seasonOf(S.day)];
     const W = D.WEATHER[r.weather];
     let body;
-    if (r.closed) {
+    if (r.rest) {
+      body = '<div class="row"><span>가게를 쉬었어요</span><span>0G</span></div>';
+    } else if (r.closed) {
       body = `<div class="row"><span>${W.emoji} ${withRo(W.name)} 휴업</span><span>0G</span></div>`;
     } else if (!r.lines.length) {
       body = '<div class="row"><span>진열한 작물이 없었어요</span><span>0G</span></div>';
@@ -879,7 +957,7 @@
       : `<span>내일 날씨 ${emo(F.emoji)} <b>${F.name}</b> — ${F.desc}</span>`;
     const btns = last && ui.sleepWarn
       ? '<button class="btn" data-act="cancelSleep">돌아가기</button><button class="btn big primary" data-act="sleep">그래도 잠자기</button>'
-      : `<button class="btn big primary" data-act="sleep">${emo('💤')} 잠자기</button>`;
+      : `${last ? '' : `<button class="btn" data-act="skip" title="며칠 건너뛰기">${emo('⏭️')} 며칠 건너뛰기</button>`}<button class="btn big primary" data-act="sleep">${emo('💤')} 잠자기</button>`;
     bar.innerHTML = `<div class="actionbar-inner"><div class="info">${info}</div><div class="btns">${btns}</div></div>`;
   }
 
@@ -918,6 +996,147 @@
     modalEl.innerHTML = '';
     setTime();
     if (kind === 'intro') showMorning();
+    if (kind === 'skipped' && S.phase === 'day') showMorning();
+  }
+
+  // ---------- 저장 관리 ----------
+  function showSaves() {
+    const busy = !!(ui.biz && !ui.biz.finished);
+    const auto = loadSave();
+    const pending = ui.savePending;
+    const slotRows = [];
+    for (let n = 1; n <= SLOT_COUNT; n++) {
+      const box = readSlot(n);
+      const info = box
+        ? `<b>${describeState(box.state)}</b><small>💰 ${fmt(box.state.money)}G · ${box.state.debt ? `빚 ${fmt(box.state.debt)}G` : '빚 없음'} · ${timeAgo(box.savedAt)}</small>`
+        : '<b class="muted">비어 있음</b><small>지금 게임을 여기에 저장할 수 있어요</small>';
+      const label = (act, text, warnText) => (pending === `${act}-${n}` ? warnText : text);
+      slotRows.push(`<div class="save-slot ${box ? '' : 'empty'}">
+        <div class="slot-no num">${n}</div>
+        <div class="slot-info">${info}</div>
+        <div class="slot-btns">
+          <button class="btn small gold ${pending === `save-${n}` ? 'warn' : ''}" data-saveslot="${n}" ${busy ? 'disabled' : ''}>${label('save', '저장', '덮어쓸까요?')}</button>
+          ${box ? `<button class="btn small primary ${pending === `load-${n}` ? 'warn' : ''}" data-loadslot="${n}" ${busy ? 'disabled' : ''}>${label('load', '불러오기', '정말 불러올까요?')}</button>
+          <button class="btn small ${pending === `del-${n}` ? 'warn' : ''}" data-delslot="${n}">${label('del', '지우기', '정말 지울까요?')}</button>` : ''}
+        </div>
+      </div>`);
+    }
+    openModal(`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="svTitle">
+      <h2 id="svTitle">${emo('💾')} 저장 관리</h2>
+      <p class="lead">자동 저장: 하루가 끝날 때와 앱을 내리거나 닫을 때 저절로 저장돼요.<br>
+        <small>${auto ? `마지막 자동 저장 — ${describeState(auto)} · ${timeAgo(auto.savedAt)}` : '아직 자동 저장이 없어요.'}</small></p>
+      ${busy ? '<p class="warn-line">영업이 끝난 뒤에 저장하거나 불러올 수 있어요.</p>' : ''}
+      <h3 class="sub-h">저장 슬롯</h3>
+      <div class="save-slots">${slotRows.join('')}</div>
+      <h3 class="sub-h">다른 기기로 옮기기</h3>
+      <p class="repay-help">휴대폰 ↔ 태블릿, 웹 ↔ 앱 사이에서는 저장이 따로 보관돼요. 저장 코드를 만들어 다른 기기에 붙여 넣으면 이어서 할 수 있어요.</p>
+      <div class="code-box">
+        <div class="code-row"><button class="btn small" data-act="makeCode">저장 코드 만들기</button>
+          ${ui.saveCode ? '<button class="btn small gold" data-act="copyCode">복사</button>' : ''}</div>
+        ${ui.saveCode ? `<textarea id="codeOut" readonly rows="3" aria-label="저장 코드">${ui.saveCode}</textarea>` : ''}
+        <textarea id="codeIn" rows="3" placeholder="다른 기기에서 만든 저장 코드를 여기에 붙여 넣으세요" aria-label="불러올 저장 코드">${ui.codeIn || ''}</textarea>
+        <div class="code-row"><button class="btn small primary ${pending === 'import' ? 'warn' : ''}" data-act="importCode" ${busy ? 'disabled' : ''}>${pending === 'import' ? '지금 게임 대신 불러올까요?' : '코드로 불러오기'}</button></div>
+      </div>
+      <div class="actions"><button class="btn primary" data-act="closeModal">닫기</button></div>
+    </div>`, 'saves');
+  }
+
+  function loadState(state) {
+    if (ui.biz) { ui.biz.finished = true; ui.biz.timers.forEach(clearTimeout); ui.biz = null; }
+    S = state;
+    Object.assign(ui, { tab: 'farm', paint: null, openWarn: false, sleepWarn: false, selSlot: null, jarPick: {}, seedQty: {}, repay: 0, savePending: null, saveCode: '', codeIn: '' });
+    save();
+    modalEl.hidden = true;
+    ui.modal = null;
+    render();
+    toast(`불러왔어요: ${describeState(S)}`);
+    if (S.over === 'fail') showFail();
+  }
+
+  // ---------- 앱으로 설치 ----------
+  function showInstall() {
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    let pwa;
+    if (ui.installPrompt) pwa = '<button class="btn gold" data-act="pwaInstall">홈 화면에 설치하기</button>';
+    else if (ios) pwa = '<p>Safari 아래쪽의 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누르세요.</p>';
+    else pwa = '<p>브라우저 메뉴(⋮)에서 <b>앱 설치</b> 또는 <b>홈 화면에 추가</b>를 누르세요.</p>';
+    openModal(`<div class="modal help" role="dialog" aria-modal="true" aria-labelledby="inTitle">
+      <h2 id="inTitle">${emo('📲')} 앱으로 설치하기</h2>
+      <h3>안드로이드 휴대폰 · 태블릿</h3>
+      <p>APK 파일을 내려받아 설치하면 앱처럼 실행되고, 인터넷이 없어도 할 수 있어요.</p>
+      <p><a class="btn big primary" href="${APK_URL}" rel="noopener">${emo('🤖')} APK 내려받기</a></p>
+      <ol>
+        <li>내려받은 <b>island-farm-shop.apk</b> 파일을 열어요.</li>
+        <li>“출처를 알 수 없는 앱” 설치를 허용해 달라고 하면 허용해요 (처음 한 번).</li>
+        <li><b>설치</b>를 누르고 <b>열기</b>!</li>
+      </ol>
+      <h3>아이폰 · 아이패드 · 그 밖의 기기</h3>
+      <p>이 페이지를 홈 화면에 설치하면 앱처럼 전체 화면으로 열리고, 한 번 연 뒤에는 인터넷 없이도 돼요.</p>
+      ${pwa}
+      <p class="repay-help">웹에서 하던 게임은 앱으로 저절로 넘어가지 않아요. ${emo('💾')} 저장 → “저장 코드 만들기”로 옮기세요.</p>
+      <div class="actions"><button class="btn primary" data-act="closeModal">닫기</button></div>
+    </div>`, 'install');
+  }
+
+  // ---------- 날짜 건너뛰기 ----------
+  function showSkip() {
+    const sk = ui.skip;
+    const left = B.deadline - S.day;
+    const stopNote = !S.paidOffDay && S.debt > 0 && left < sk.days
+      ? `<p class="warn-line">빚 마감일(${B.deadline}일째) 밤에서 멈춰요. 그때 남은 빚을 갚을 수 있어요.</p>` : '';
+    openModal(`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="skTitle">
+      <h2 id="skTitle">${emo('⏭️')} 날짜 건너뛰기</h2>
+      <p class="lead">${S.phase === 'day' ? '오늘 남은 일을 건너뛰고' : '바로 잠자리에 들고'} 날짜를 넘겨요.</p>
+      <div class="seg" role="group" aria-label="건너뛸 날 수">${[1, 3, 7].map((n) => `<button class="seg-btn" data-skipdays="${n}" aria-pressed="${sk.days === n}">${n}일</button>`).join('')}</div>
+      <label class="check"><input type="checkbox" id="skipOpen" ${sk.open ? 'checked' : ''}><span>건너뛰는 날에도 가게 열기<small>지금 진열대와 가격 그대로 팔아요</small></span></label>
+      <label class="check"><input type="checkbox" id="skipHarvest" ${sk.harvest ? 'checked' : ''}><span>다 자란 작물 수확하기<small>그날 체력으로 한 칸에 1씩</small></span></label>
+      <ul class="skip-notes">
+        <li>물은 비와 스프링클러가 준 칸만 받아요.</li>
+        <li>씨앗을 심거나 사지는 않아요. 항아리는 계속 가공해요.</li>
+      </ul>
+      ${stopNote}
+      <div class="actions"><button class="btn" data-act="closeModal">취소</button><button class="btn primary" data-act="doSkip">${sk.days}일 건너뛰기</button></div>
+    </div>`, 'skip');
+  }
+
+  function runSkip() {
+    const log = [];
+    let stopped = null;
+    for (let k = 0; k < ui.skip.days; k++) {
+      const r = E.skipDay(S, { open: ui.skip.open, harvest: ui.skip.harvest });
+      log.push(r);
+      if (r.stopped) { stopped = r.stopped; break; }
+    }
+    save();
+    Object.assign(ui, { tab: 'farm', jarPick: {}, seedQty: {}, repay: 0, openWarn: false, sleepWarn: false, selSlot: null });
+    ui.modal = null;
+    render();
+    showSkipped(log, stopped);
+  }
+
+  function showSkipped(log, stopped) {
+    const total = log.reduce((a, r) => a + (r.sale ? r.sale.revenue : 0), 0);
+    const notable = ['🏺', '🌸', '🌻', '🍁', '❄️', '🧊'];
+    const rows = log.map((r) => {
+      const sz = D.SEASONS[E.seasonOf(r.day)];
+      let what;
+      if (!r.sale) what = '밤 → 잠자기';
+      else if (r.sale.rest) what = '가게 쉼';
+      else if (r.sale.closed) what = `${D.WEATHER[r.sale.weather].emoji} ${withRo(D.WEATHER[r.sale.weather].name)} 휴업`;
+      else what = `손님 ${r.sale.customers.length}명 · ${r.sale.sold}개 판매 · <b class="num">+${fmt(r.sale.revenue)}G</b>`;
+      const notes = [];
+      if (r.harvested) notes.push(`🧺 ${r.harvested}개 수확`);
+      (r.morning ? r.morning.events : []).filter((e) => notable.includes(e.icon)).forEach((e) => notes.push(`${e.icon} ${e.text}`));
+      return `<li><span class="skip-day">${sz.emoji} ${sz.name} ${E.dayInSeason(r.day)}일차</span>
+        <span>${what}${notes.length ? `<small>${notes.join('<br>')}</small>` : ''}</span></li>`;
+    }).join('');
+    openModal(`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="skdTitle">
+      <h2 id="skdTitle">${log.length}일을 건너뛰었어요</h2>
+      <p class="lead">매출 합계 <b class="num">${fmt(total)}G</b> · 지금 ${describeState(S)}</p>
+      <ul class="skip-log">${rows}</ul>
+      ${stopped === 'deadline' ? '<p class="warn-line">빚 마감일 밤이에요. 잠들기 전에 남은 빚을 갚으세요!</p>' : ''}
+      <div class="actions"><button class="btn big primary" data-act="closeModal">${S.phase === 'day' ? '오늘 아침 보기' : '확인'}</button></div>
+    </div>`, 'skipped');
   }
 
   function showMorning() {
@@ -952,7 +1171,7 @@
         <li>${emo('🏪')}<span><b>영업</b> — 손님이 오가며 사거나 그냥 가요.</span></li>
         <li>${emo('🌙')}<span><b>밤</b> — 정산하고, 씨앗과 업그레이드를 사고, 빚을 갚고 잠들어요.</span></li>
       </ul>
-      <p class="repay-help">한 계절은 ${B.seasonLength}일이에요. 겨울에는 온실이 없으면 야외 밭이 얼어요. 가공 공방을 지으면 작물을 잼과 피클로 만들 수 있어요. 진행은 하루가 끝날 때마다 이 브라우저에 자동 저장돼요.</p>
+      <p class="repay-help">한 계절은 ${B.seasonLength}일이에요. 겨울에는 온실이 없으면 야외 밭이 얼어요. 가공 공방을 지으면 작물을 잼과 피클로 만들 수 있어요. 진행은 자동 저장되고, ${emo('💾')} 버튼에서 슬롯 3개에 따로 저장할 수 있어요. ${emo('⏭️')} 건너뛰기로 날짜를 빨리 넘길 수도 있어요.</p>
       <div class="actions"><button class="btn big primary" data-act="closeModal">시작하기</button></div>
     </div>`, 'intro');
   }
@@ -975,6 +1194,12 @@
         <li>손님은 제철 작물과 인기 작물을 많이 찾아요. 찾는 게 없으면 둘러보다 그냥 가기도 해요.</li>
         <li>가게 평판은 손님 수에 영향을 줘요. 적당한 값에 산 손님은 평판을 올리고, 비싸서 그냥 간 손님은 떨어뜨려요.</li>
         <li>비 오는 날은 손님이 줄고, 폭풍이 오는 날은 문을 열 수 없어요. 폭풍은 전날 예보로 알 수 있어요.</li>
+      </ul>
+      <h3>저장과 건너뛰기</h3>
+      <ul>
+        <li>${emo('💾')} 자동 저장: 하루가 끝날 때, 앱을 내리거나 닫을 때 저절로 저장돼요.</li>
+        <li>${emo('💾')} 버튼에서 슬롯 3개에 따로 저장하고 불러올 수 있어요. 저장 코드로 다른 기기에 옮길 수도 있어요.</li>
+        <li>${emo('⏭️')} 건너뛰기: 1일·3일·7일을 한 번에 넘겨요. 건너뛰는 날에도 가게를 열고 다 자란 작물을 거둘 수 있어요. 빚 마감일 밤에서는 멈춰요.</li>
       </ul>
       <h3>가공 공방</h3>
       <ul>
@@ -1058,12 +1283,66 @@
   }
 
   document.addEventListener('click', (e) => {
-    const el = e.target.closest('[data-act],[data-tab],[data-tool],[data-seed],[data-stock],[data-slot],[data-clear],[data-step],[data-buyseed],[data-up],[data-repayset],[data-jarstep],[data-jarload]');
+    const el = e.target.closest('[data-act],[data-tab],[data-tool],[data-seed],[data-stock],[data-slot],[data-clear],[data-step],[data-buyseed],[data-up],[data-repayset],[data-jarstep],[data-jarload],[data-skipdays],[data-saveslot],[data-loadslot],[data-delslot]');
     if (!el) return;
     const d = el.dataset;
 
+    // 저장 슬롯: 덮어쓰기·불러오기·지우기는 한 번 더 눌러야 실행된다
+    if (d.saveslot || d.loadslot || d.delslot) {
+      const n = Number(d.saveslot || d.loadslot || d.delslot);
+      const act = d.saveslot ? 'save' : d.loadslot ? 'load' : 'del';
+      const key = `${act}-${n}`;
+      const box = readSlot(n);
+      const needConfirm = act !== 'save' || !!box;
+      if (needConfirm && ui.savePending !== key) { ui.savePending = key; showSaves(); return; }
+      ui.savePending = null;
+      if (act === 'save') {
+        if (writeSlot(n)) toast(`${n}번 슬롯에 저장했어요.`);
+        else toast('저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.', true);
+        showSaves();
+      } else if (act === 'load') {
+        if (box) loadState(box.state);
+      } else {
+        deleteSlot(n);
+        toast(`${n}번 슬롯을 지웠어요.`);
+        showSaves();
+      }
+      return;
+    }
+    if (d.skipdays) { ui.skip.days = Number(d.skipdays); showSkip(); return; }
+
     if (d.act) {
       switch (d.act) {
+        case 'saves': ui.savePending = null; showSaves(); return;
+        case 'install': showInstall(); return;
+        case 'pwaInstall':
+          if (ui.installPrompt) { ui.installPrompt.prompt(); ui.installPrompt = null; }
+          closeModal();
+          return;
+        case 'skip': if (!ui.biz) showSkip(); return;
+        case 'doSkip': runSkip(); return;
+        case 'makeCode':
+          exportCode().then((code) => { ui.saveCode = code; ui.savePending = null; showSaves(); toast('저장 코드를 만들었어요. 복사해서 다른 기기에 붙여 넣으세요.'); })
+            .catch(() => toast('저장 코드를 만들지 못했어요.', true));
+          return;
+        case 'copyCode': {
+          const box = $('#codeOut');
+          const fallback = () => { if (box) { box.focus(); box.select(); } toast('코드를 길게 눌러 복사해 주세요.'); };
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ui.saveCode).then(() => toast('저장 코드를 복사했어요.'), fallback);
+          else fallback();
+          return;
+        }
+        case 'importCode': {
+          const text = ($('#codeIn') && $('#codeIn').value) || ui.codeIn || '';
+          ui.codeIn = text;
+          if (!text.trim()) { toast('불러올 저장 코드를 붙여 넣어 주세요.', true); return; }
+          importCode(text).then((state) => {
+            if (!state) { ui.savePending = null; toast('저장 코드가 올바르지 않아요. 전체를 빠짐없이 붙여 넣었는지 확인해 주세요.', true); return; }
+            if (ui.savePending !== 'import') { ui.savePending = 'import'; showSaves(); return; }
+            loadState(state);
+          });
+          return;
+        }
         case 'help': showHelp(); return;
         case 'restart': showRestart(); return;
         case 'newGame': newGame(); return;
@@ -1251,13 +1530,45 @@
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && ui.modal && ['help', 'restart'].includes(ui.modal)) { closeModal(); return; }
+    if (e.key === 'Escape' && ui.modal && ['help', 'restart', 'saves', 'install', 'skip'].includes(ui.modal)) { closeModal(); return; }
     if (e.key === 'Enter' && e.target.matches && e.target.matches('.slot.empty')) { e.target.click(); return; }
     if (ui.modal || S.phase !== 'day' || (ui.tab !== 'farm' && ui.tab !== 'gh') || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.target.matches && e.target.matches('input, select')) return;
     const tool = TOOLS.find((t) => t.key === e.key);
     if (tool) { ui.tool = tool.id; renderDay(); }
   });
+
+  modalEl.addEventListener('input', (e) => {
+    if (e.target.id === 'codeIn') { ui.codeIn = e.target.value; if (ui.savePending === 'import') ui.savePending = null; }
+  });
+  modalEl.addEventListener('change', (e) => {
+    if (e.target.id === 'skipOpen') ui.skip.open = e.target.checked;
+    if (e.target.id === 'skipHarvest') ui.skip.harvest = e.target.checked;
+  });
+
+  // 앱을 내리거나 닫을 때 자동 저장 (휴대폰은 뒤로 간 앱을 언제든 끌 수 있다)
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(); });
+  window.addEventListener('pagehide', save);
+
+  // 홈 화면 설치(PWA)
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); ui.installPrompt = e; });
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !IS_APP) {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* 오프라인 지원 없이도 게임은 돈다 */ });
+  }
+
+  // 안드로이드 앱: 뒤로 가기 버튼은 창을 닫고, 두 번 누르면 저장하고 종료
+  const AppPlugin = IS_APP && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (AppPlugin && AppPlugin.addListener) {
+    let lastBack = 0;
+    AppPlugin.addListener('backButton', () => {
+      if (ui.modal && ['help', 'restart', 'saves', 'install', 'skip', 'skipped'].includes(ui.modal)) { closeModal(); return; }
+      save();
+      if (Date.now() - lastBack < 2000) { AppPlugin.exitApp(); return; }
+      lastBack = Date.now();
+      toast('한 번 더 누르면 게임을 닫아요. 자동 저장했어요.');
+    });
+    AppPlugin.addListener('pause', save);
+  }
 
   // ---------- 시작 ----------
   S = loadSave();
@@ -1266,6 +1577,6 @@
   } else {
     render();
     if (S.over === 'fail') showFail();
-    else { ui.modal = 'morning'; setTime(); showMorning(); }
+    else if (S.phase === 'day' && S.energy === B.maxEnergy) { ui.modal = 'morning'; setTime(); showMorning(); }
   }
 })();

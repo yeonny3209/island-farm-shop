@@ -1,0 +1,95 @@
+# 게임 파일이 바뀌면 안드로이드 APK 를 빌드해서 GitHub 릴리스에 올린다.
+# 내려받기 주소(항상 최신): https://github.com/yeonny3209/island-farm-shop/releases/latest/download/island-farm-shop.apk
+name: 안드로이드 APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'manifest.webmanifest'
+      - 'css/**'
+      - 'js/**'
+      - 'icons/**'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tools/build-web.js'
+      - 'tools/make-icons.js'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: 패키지 설치
+        run: npm ci --no-audit --no-fund
+
+      - name: 안드로이드 프로젝트 만들기
+        run: |
+          npm run build:web
+          npx cap add android
+          node tools/make-icons.js --android android/app/src/main/res
+
+      - name: 버전 번호 붙이기
+        run: |
+          sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
+          grep -n "versionCode\|versionName" android/app/build.gradle
+
+      - name: 서명된 APK 빌드
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.p12" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias=islandfarm \
+            -Pandroid.injected.signing.key.password="$KEYSTORE_PASSWORD"
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/island-farm-shop.apk"
+          rm -f "$RUNNER_TEMP/release.p12"
+
+      - name: 서명 확인
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs island-farm-shop.apk | head -4
+          ls -la island-farm-shop.apk
+
+      - name: 릴리스에 올리기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v1.${{ github.run_number }}"
+          gh release create "$TAG" island-farm-shop.apk \
+            --title "작은 섬 농장 가게 $TAG (안드로이드)" \
+            --notes "휴대폰·태블릿에서 island-farm-shop.apk 를 내려받아 설치하세요. 처음 설치할 때 '출처를 알 수 없는 앱' 설치를 허용해야 할 수 있어요. (커밋 ${GITHUB_SHA::7})" \
+            --latest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: island-farm-shop-apk
+          path: island-farm-shop.apk

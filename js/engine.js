@@ -316,15 +316,17 @@ const Engine = ((D) => {
 
   const displayQty = (s, id) => Math.min(s.stock[id] || 0, B.shelfCap);
 
-  function openShop(s) {
+  // opts.rest: 날씨와 상관없이 가게를 쉬는 날 (건너뛰기에서 "가게 열기"를 끈 경우)
+  function openShop(s, opts) {
     if (s.phase !== 'day' || s.over) return null;
     const w = D.WEATHER[s.weather];
+    const rest = !!(opts && opts.rest);
     const res = {
-      day: s.day, weather: s.weather, closed: !!w.closed, popular: s.popular,
+      day: s.day, weather: s.weather, closed: !!w.closed || rest, rest: rest && !w.closed, popular: s.popular,
       slots: [], customers: [], lines: [], missing: {}, revenue: 0, sold: 0, buyers: 0, pricey: 0, empty: 0,
     };
 
-    if (!w.closed) {
+    if (!res.closed) {
       const n = Math.max(0, Math.round(baseTraffic(s) * (1 + (rand(s) * 2 - 1) * B.customerJitter)));
       let rep = 0;
       const slots = [];
@@ -575,6 +577,39 @@ const Engine = ((D) => {
     return s.morning;
   }
 
+  // ---------- 날짜 건너뛰기 ----------
+  // 다 자란 작물을 체력이 닿는 만큼 수확한다
+  function autoHarvest(s) {
+    let n = 0;
+    for (const area of ['farm', 'gh']) {
+      if (area === 'gh' && !hasGreenhouse(s)) continue;
+      for (const i of activeIndices(s, area)) {
+        if (!isReady(areaTiles(s, area)[i])) continue;
+        if (!act(s, 'harvest', area, i).ok) return n;
+        n++;
+      }
+    }
+    return n;
+  }
+
+  // 하루를 건너뛴다: (낮이면) 수확 → 영업 또는 휴업 → 잠자기.
+  // 빚이 남은 채 마감일 밤이 되면 잠들지 않고 멈춘다 (마지막으로 빚을 갚을 기회를 준다).
+  function skipDay(s, opts) {
+    const out = { day: s.day, harvested: 0, sale: null, stopped: null, morning: null };
+    if (s.over) { out.stopped = 'over'; return out; }
+    if (s.phase === 'day') {
+      if (opts.harvest) out.harvested = autoHarvest(s);
+      out.sale = openShop(s, { rest: !opts.open });
+    }
+    if (s.debt > 0 && !s.paidOffDay && s.day >= B.deadline) {
+      out.stopped = 'deadline';
+      return out;
+    }
+    sleep(s);
+    out.morning = s.morning;
+    return out;
+  }
+
   function buildMorning(s, ev) {
     const season = seasonOf(s.day);
     const W = D.WEATHER[s.weather];
@@ -669,7 +704,7 @@ const Engine = ((D) => {
     buyChance, clampPct, priceOf, chanceFor, customerForecast, displayQty, wantWeight,
     setShelf, setShelfPrice, clearShelf, openShop,
     seedShopList, buySeeds, upgradeInfo, buyUpgrade, buySprinkler, repay,
-    sleep, newGame, migrate, isValidSave,
+    sleep, autoHarvest, skipDay, newGame, migrate, isValidSave,
   };
 })(typeof GameData !== 'undefined' ? GameData : require('./data.js'));
 

@@ -1,4 +1,7 @@
 .claude/
 node_modules/
+www/
+android/
+signing/
 .DS_Store
 Thumbs.db

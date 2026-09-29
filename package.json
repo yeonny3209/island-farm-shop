@@ -1,0 +1,26 @@
+{
+  "name": "island-farm-shop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "작은 섬 농장 가게 — 40일 안에 빚 5,000G를 갚는 농장·가게 경영 시뮬레이션",
+  "license": "UNLICENSED",
+  "scripts": {
+    "serve": "node tools/serve.js",
+    "balance": "node tools/balance.js",
+    "icons": "node tools/make-icons.js",
+    "build:web": "node tools/build-web.js",
+    "android:add": "npm run build:web && npx cap add android && node tools/make-icons.js --android android/app/src/main/res",
+    "android:sync": "npm run build:web && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/app": "8.1.1",
+    "@capacitor/core": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -3,9 +3,23 @@
 작은 섬의 버려진 밭과 가게를 물려받았는데, 빚 **5,000G**도 함께 물려받았습니다.
 **40일 안에** 작물을 키워 내 가게에서 팔고 빚을 갚는 농장 + 가게 경영 시뮬레이션입니다.
 
-**▶ 플레이: https://yeonny3209.github.io/island-farm-shop/**
+**▶ 웹에서 플레이: https://yeonny3209.github.io/island-farm-shop/**
+**📲 안드로이드 앱(APK): https://github.com/yeonny3209/island-farm-shop/releases/latest/download/island-farm-shop.apk**
 
-설치할 것 없이 브라우저에서 바로 돌아갑니다. 진행은 하루가 끝날 때마다 브라우저(localStorage)에 자동 저장됩니다.
+## 휴대폰 · 태블릿에 설치하기
+
+- **안드로이드**: 위 APK 링크를 휴대폰이나 태블릿에서 열어 내려받고, 파일을 열어 설치합니다. 처음 한 번은 "출처를 알 수 없는 앱" 설치를 허용해야 할 수 있습니다. 설치하면 앱처럼 실행되고 인터넷 없이도 할 수 있습니다. 새 버전 APK를 설치하면 저장은 그대로 남습니다.
+- **아이폰 · 아이패드**: Safari로 웹 주소를 열고 공유 버튼 → "홈 화면에 추가". 앱처럼 전체 화면으로 열리고, 한 번 연 뒤에는 오프라인에서도 됩니다.
+- **안드로이드 크롬**: 게임 화면의 📲 버튼 → "홈 화면에 설치"로도 설치할 수 있습니다.
+
+웹에서 하던 게임과 앱의 저장은 따로 보관됩니다. 💾 저장 → "저장 코드 만들기"로 만든 코드를 다른 기기에 붙여 넣으면 이어서 할 수 있습니다.
+
+## 저장과 건너뛰기
+
+- **자동 저장**: 하루가 끝날 때, 앱을 내리거나 닫을 때 저절로 저장됩니다.
+- **저장 슬롯 3개**: 💾 버튼에서 언제든 저장하고, 불러오고, 지울 수 있습니다.
+- **저장 코드**: 휴대폰 ↔ 태블릿, 웹 ↔ 앱 사이로 게임을 옮길 때 씁니다.
+- **⏭ 건너뛰기**: 1일 · 3일 · 7일을 한 번에 넘깁니다. 건너뛰는 날에도 진열대 그대로 가게를 열고(끌 수 있음) 다 자란 작물을 거둘 수 있습니다. 물은 비와 스프링클러가 준 칸만 받습니다. 빚이 남아 있으면 마감일 밤에서 멈춥니다.
 
 ## 하루의 흐름
 
@@ -69,6 +83,14 @@ node tools/serve.js
 
 그다음 http://localhost:5173 을 엽니다. (`index.html`을 바로 열어도 동작합니다.)
 
+## 안드로이드 APK 빌드
+
+`main`에 게임 파일이 바뀌어 올라오면 GitHub Actions(`.github/workflows/android.yml`)가 Capacitor로 안드로이드 프로젝트를 만들고, 서명된 APK를 빌드해 [Releases](https://github.com/yeonny3209/island-farm-shop/releases)에 올립니다. Actions 탭에서 "안드로이드 APK"를 직접 실행할 수도 있습니다.
+
+- 서명 키는 저장소 Secrets(`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`)에 있습니다. 같은 키로 서명해야 설치된 앱 위에 업데이트가 됩니다.
+- 로컬에서 안드로이드 프로젝트를 만들려면 `npm install` 후 `npm run android:add` (빌드에는 Android Studio/SDK가 필요합니다).
+- 스크립트·스타일을 고치면 `index.html`의 `?v=` 값과 `sw.js`의 `VERSION`을 함께 올려 주세요. 그래야 이미 연 브라우저에도 새 버전이 바로 들어갑니다.
+
 ## 파일 구성
 
 ```
@@ -76,7 +98,13 @@ index.html        화면 뼈대
 css/style.css     스타일 (시간대별 바다 배경, 섬, 가게, 영수증)
 js/data.js        수치표: 작물, 가공품, 날씨, 업그레이드, 밸런스 상수
 js/engine.js      게임 규칙 (화면과 분리된 순수 로직, Node에서도 동작)
-js/ui.js          그리기와 입력, 영업 장면 재생, 저장
+js/ui.js          그리기와 입력, 영업 장면 재생, 저장·건너뛰기
+manifest.webmanifest, sw.js   홈 화면 설치(PWA)와 오프라인 지원
+icons/            앱 아이콘 (tools/make-icons.js 로 생성)
+capacitor.config.json         안드로이드 앱 설정
+.github/workflows/android.yml APK 자동 빌드
 tools/balance.js  밸런스 시뮬레이션
+tools/make-icons.js 아이콘 그리기 (의존성 없음)
+tools/build-web.js  앱에 넣을 웹 파일을 www/ 로 모으기
 tools/serve.js    로컬 정적 서버 (의존성 없음)
 ```
