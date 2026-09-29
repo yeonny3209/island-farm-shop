@@ -16,24 +16,30 @@ const GameData = (() => {
     regrow: { name: '재수확 작물', short: '재수확' },
   };
 
-  // seed: 씨앗값, grow: 첫 수확까지 일수, regrow: 재수확 간격, base: 기준가
+  // seed: 씨앗값, grow: 첫 수확까지 일수, regrow: 재수확 간격, base: 기준가, proc: 가공하면 무엇이 되는지
   const CROPS = [
-    { id: 'lettuce', name: '상추', emoji: '🥬', season: 0, type: 'fast', seed: 10, grow: 3, base: 34 },
-    { id: 'broccoli', name: '브로콜리', emoji: '🥦', season: 0, type: 'slow', seed: 50, grow: 7, base: 150 },
-    { id: 'strawberry', name: '딸기', emoji: '🍓', season: 0, type: 'regrow', seed: 55, grow: 5, regrow: 2, base: 55 },
+    { id: 'lettuce', name: '상추', emoji: '🥬', season: 0, type: 'fast', seed: 10, grow: 3, base: 34, proc: 'pickle' },
+    { id: 'broccoli', name: '브로콜리', emoji: '🥦', season: 0, type: 'slow', seed: 50, grow: 7, base: 150, proc: 'pickle' },
+    { id: 'strawberry', name: '딸기', emoji: '🍓', season: 0, type: 'regrow', seed: 55, grow: 5, regrow: 2, base: 55, proc: 'jam' },
 
-    { id: 'cucumber', name: '오이', emoji: '🥒', season: 1, type: 'fast', seed: 15, grow: 3, base: 46 },
-    { id: 'watermelon', name: '수박', emoji: '🍉', season: 1, type: 'slow', seed: 100, grow: 8, base: 270 },
-    { id: 'tomato', name: '토마토', emoji: '🍅', season: 1, type: 'regrow', seed: 80, grow: 5, regrow: 2, base: 75 },
+    { id: 'cucumber', name: '오이', emoji: '🥒', season: 1, type: 'fast', seed: 15, grow: 3, base: 46, proc: 'pickle' },
+    { id: 'watermelon', name: '수박', emoji: '🍉', season: 1, type: 'slow', seed: 100, grow: 8, base: 270, proc: 'jam' },
+    { id: 'tomato', name: '토마토', emoji: '🍅', season: 1, type: 'regrow', seed: 80, grow: 5, regrow: 2, base: 75, proc: 'jam' },
 
-    { id: 'carrot', name: '당근', emoji: '🥕', season: 2, type: 'fast', seed: 20, grow: 4, base: 74 },
-    { id: 'pumpkin', name: '호박', emoji: '🎃', season: 2, type: 'slow', seed: 120, grow: 8, base: 340 },
-    { id: 'grape', name: '포도', emoji: '🍇', season: 2, type: 'regrow', seed: 100, grow: 5, regrow: 2, base: 95 },
+    { id: 'carrot', name: '당근', emoji: '🥕', season: 2, type: 'fast', seed: 20, grow: 4, base: 74, proc: 'pickle' },
+    { id: 'pumpkin', name: '호박', emoji: '🎃', season: 2, type: 'slow', seed: 120, grow: 8, base: 340, proc: 'pickle' },
+    { id: 'grape', name: '포도', emoji: '🍇', season: 2, type: 'regrow', seed: 100, grow: 5, regrow: 2, base: 95, proc: 'jam' },
 
-    { id: 'mushroom', name: '버섯', emoji: '🍄', season: 3, type: 'fast', seed: 25, grow: 3, base: 75 },
-    { id: 'pineapple', name: '파인애플', emoji: '🍍', season: 3, type: 'slow', seed: 150, grow: 7, base: 400 },
-    { id: 'blueberry', name: '블루베리', emoji: '🫐', season: 3, type: 'regrow', seed: 110, grow: 5, regrow: 2, base: 95 },
+    { id: 'mushroom', name: '버섯', emoji: '🍄', season: 3, type: 'fast', seed: 25, grow: 3, base: 75, proc: 'pickle' },
+    { id: 'pineapple', name: '파인애플', emoji: '🍍', season: 3, type: 'slow', seed: 150, grow: 7, base: 400, proc: 'jam' },
+    { id: 'blueberry', name: '블루베리', emoji: '🫐', season: 3, type: 'regrow', seed: 110, grow: 5, regrow: 2, base: 95, proc: 'jam' },
   ];
+
+  // 가공품: 기준가 = 작물 기준가 × mult + add (5G 단위 반올림), days 뒤 아침에 완성
+  const PROCESSES = {
+    jam: { name: '잼', emoji: '🍯', from: '과일', mult: 1.25, add: 25, days: 2 },
+    pickle: { name: '피클', emoji: '🥫', from: '채소', mult: 1.2, add: 30, days: 2 },
+  };
 
   const WEATHER = {
     sunny: { name: '맑음', emoji: '☀️', customers: 1, waters: false, closed: false, desc: '장사하기 좋은 날씨예요.' },
@@ -90,6 +96,15 @@ const GameData = (() => {
       ],
     },
     {
+      id: 'workshop', name: '가공 공방', emoji: '🏺',
+      desc: '장독대에 항아리가 생겨요. 작물을 넣어 두면 잼이나 피클이 돼요.',
+      levels: [
+        { cost: 400, value: 2, label: '항아리 2개' },
+        { cost: 900, value: 4, label: '항아리 4개' },
+        { cost: 1500, value: 6, label: '항아리 6개' },
+      ],
+    },
+    {
       id: 'greenhouse', name: '온실', emoji: '🏡',
       desc: '4×4 온실. 계절과 상관없이 어떤 씨앗이든 키울 수 있고, 계절이 바뀌어도 시들지 않아요. 비는 들지 않아요.',
       levels: [
@@ -114,6 +129,7 @@ const GameData = (() => {
     fieldStart: 4,
     greenhouseSize: 4,
     sprinklerCost: 200,
+    procBatch: 5, // 항아리 하나에 넣을 수 있는 작물 수
 
     shelfStart: 3,
     shelfCap: 10, // 진열대 한 칸에 올릴 수 있는 최대 수량
@@ -123,6 +139,7 @@ const GameData = (() => {
     wantShown: [4, 4, 4, 3], // 진열된 제철 작물
     wantUnshown: [1.5, 1.5, 1.5, 1], // 진열 안 된 제철 작물 (찾다가 없으면 실망)
     wantOther: [1, 1, 1, 2], // 진열된 제철 아닌 작물 (겨울엔 저장 작물을 많이 찾는다)
+    wantProcessed: [2, 2, 2, 3], // 진열된 가공품 (계절을 타지 않고, 겨울엔 더 찾는다)
     wantPopular: 4, // 인기 작물 추가 가중치
     popularTolerance: 1.4, // 인기 작물은 40% 비싸도 기준가처럼 느낀다
     browseChance: 0.5, // 찾는 게 없거나 비싸면 다른 칸을 둘러볼 확률
@@ -143,7 +160,7 @@ const GameData = (() => {
 
   const FACES = ['🧑', '👩', '👨', '👵', '👴', '🧒', '👧', '👦', '🧔', '👱', '🙋', '🧑‍🦱', '👩‍🦰', '🧓'];
 
-  return { SEASONS, TYPES, CROPS, WEATHER, WEATHER_TABLE, UPGRADES, BALANCE, FACES };
+  return { SEASONS, TYPES, CROPS, PROCESSES, WEATHER, WEATHER_TABLE, UPGRADES, BALANCE, FACES };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = GameData;

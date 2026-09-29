@@ -10,10 +10,29 @@ const Engine = ((D) => {
   const UP = {};
   D.UPGRADES.forEach((u) => { UP[u.id] = u; });
 
+  // 창고와 진열대에 놓이는 모든 물건: 작물 12종 + 가공품 12종
+  const ITEM = {};
+  const ITEMS = [];
+  const productOf = (cropId) => `${cropId}_${CROP[cropId].proc}`;
+  D.CROPS.forEach((c) => {
+    ITEM[c.id] = { id: c.id, name: c.name, emoji: c.emoji, base: c.base, kind: 'crop', crop: c.id, season: c.season };
+  });
+  D.CROPS.forEach((c) => {
+    const p = D.PROCESSES[c.proc];
+    const id = productOf(c.id);
+    ITEM[id] = {
+      id, emoji: p.emoji, kind: c.proc, crop: c.id, season: null, days: p.days,
+      name: c.proc === 'jam' ? `${c.name}잼` : `${c.name} ${p.name}`,
+      base: Math.round((c.base * p.mult + p.add) / 5) * 5,
+    };
+  });
+  D.CROPS.forEach((c) => ITEMS.push(ITEM[c.id]));
+  D.CROPS.forEach((c) => ITEMS.push(ITEM[productOf(c.id)]));
+
   const FARM_W = 8; // 밭은 항상 8×8 배열로 저장하고, 확장 단계만큼만 쓴다
   const GH_W = B.greenhouseSize;
   const YEAR = B.seasonLength * 4;
-  const SAVE_VERSION = 1;
+  const SAVE_VERSION = 2;
 
   // ---------- 난수 (mulberry32) ----------
   function rand(s) {
@@ -57,6 +76,7 @@ const Engine = ((D) => {
   const shelfSlots = (s) => upValue(s, 'shelf', B.shelfStart);
   const signBonus = (s) => upValue(s, 'sign', 0);
   const hasGreenhouse = (s) => (s.up.greenhouse || 0) > 0;
+  const machineCount = (s) => upValue(s, 'workshop', 0);
 
   // ---------- 밭 ----------
   const emptyTile = () => ({ c: null, g: 0, w: false, s: false });
@@ -228,7 +248,7 @@ const Engine = ((D) => {
     const stepped = Math.round(pct / B.priceStep) * B.priceStep;
     return Math.min(B.priceMax, Math.max(B.priceMin, stepped));
   };
-  const priceOf = (id, pct) => Math.max(1, Math.round((CROP[id].base * pct) / 100));
+  const priceOf = (id, pct) => Math.max(1, Math.round((ITEM[id].base * pct) / 100));
   function effectiveRatio(s, id, pct) {
     const r = pct / 100;
     return id === s.popular ? r / B.popularTolerance : r;
@@ -250,13 +270,14 @@ const Engine = ((D) => {
     };
   }
 
-  // 손님이 이 작물을 찾을 가중치
-  function wantWeight(s, crop, shown) {
+  // 손님이 이 물건(작물 또는 가공품)을 찾을 가중치
+  function wantWeight(s, item, shown) {
     const season = seasonOf(s.day);
     let w;
-    if (crop.season === season) w = shown ? B.wantShown[season] : B.wantUnshown[season];
+    if (item.kind !== 'crop') w = shown ? B.wantProcessed[season] : 0;
+    else if (item.season === season) w = shown ? B.wantShown[season] : B.wantUnshown[season];
     else w = shown ? B.wantOther[season] : 0;
-    if (crop.id === s.popular) w += B.wantPopular;
+    if (item.id === s.popular) w += B.wantPopular;
     return w;
   }
 
@@ -268,7 +289,7 @@ const Engine = ((D) => {
   function setShelf(s, slot, cropId) {
     if (s.phase !== 'day') return fail('진열은 영업 전에만 바꿀 수 있어요.');
     if (slot < 0 || slot >= shelfSlots(s)) return fail('없는 진열칸이에요.');
-    if (!(s.stock[cropId] > 0)) return fail('창고에 없는 작물이에요.');
+    if (!(s.stock[cropId] > 0)) return fail('창고에 없는 물건이에요.');
     const prev = s.shelf.findIndex((x) => x && x.id === cropId);
     if (prev === slot) return { ok: true };
     if (prev >= 0) {
@@ -317,7 +338,7 @@ const Engine = ((D) => {
       res.missing = {}; // 찾는 작물이 없어서 그냥 간 손님 (작물별)
 
       // 손님은 저마다 사고 싶은 작물이 있다: 제철 작물과 인기 작물을 많이 찾고, 진열된 다른 작물도 가끔 찾는다
-      const wants = D.CROPS.map((c) => [c.id, wantWeight(s, c, slots.some((x) => x.id === c.id))]).filter((e) => e[1] > 0);
+      const wants = ITEMS.map((it) => [it.id, wantWeight(s, it, slots.some((x) => x.id === it.id))]).filter((e) => e[1] > 0);
 
       const tryBuy = (cust, sl, impulse) => {
         const r = effectiveRatio(s, sl.id, sl.pct);
@@ -417,7 +438,45 @@ const Engine = ((D) => {
     s.money -= info.next.cost;
     s.up[id] = info.lv + 1;
     if (id === 'shelf') syncShelf(s);
+    if (id === 'workshop') syncMachines(s);
     return { ok: true, cost: info.next.cost };
+  }
+
+  // ---------- 가공 공방 (항아리) ----------
+  function syncMachines(s) {
+    const n = machineCount(s);
+    while (s.machines.length < n) s.machines.push(null);
+  }
+
+  // 낮이나 밤에 빈 항아리에 작물을 넣는다. 가공은 밤사이 진행되고 다 되면 아침에 창고로 들어온다.
+  function loadMachine(s, idx, cropId, qty) {
+    if (s.over || s.phase !== 'day' && s.phase !== 'night') return fail('지금은 항아리를 쓸 수 없어요.');
+    if (!(idx >= 0 && idx < machineCount(s))) return fail('없는 항아리예요.');
+    if (s.machines[idx]) return fail('이미 가공 중인 항아리예요.');
+    const crop = CROP[cropId];
+    if (!crop) return fail('작물만 넣을 수 있어요.');
+    qty = Math.floor(qty);
+    if (!(qty > 0)) return fail('넣을 수량을 골라 주세요.');
+    if (qty > B.procBatch) return fail(`항아리 하나에 ${B.procBatch}개까지 넣을 수 있어요.`);
+    if ((s.stock[cropId] || 0) < qty) return fail(`창고에 ${josa(crop.name, '이가')} 모자라요.`);
+    s.stock[cropId] -= qty;
+    s.machines[idx] = { c: cropId, n: qty, d: D.PROCESSES[crop.proc].days };
+    return { ok: true, product: productOf(cropId), days: D.PROCESSES[crop.proc].days };
+  }
+
+  function runMachines(s) {
+    const made = {};
+    s.machines.forEach((m, i) => {
+      if (!m) return;
+      m.d--;
+      if (m.d > 0) return;
+      const pid = productOf(m.c);
+      s.stock[pid] = (s.stock[pid] || 0) + m.n;
+      made[pid] = (made[pid] || 0) + m.n;
+      s.stats.processed += m.n;
+      s.machines[i] = null;
+    });
+    return made;
   }
 
   function buySprinkler(s, qty) {
@@ -488,7 +547,7 @@ const Engine = ((D) => {
     const prevSeason = seasonOf(s.day);
     s.day++;
     const season = seasonOf(s.day);
-    const ev = { seasonChanged: season !== prevSeason, withered: 0, rained: false, sprinklers: 0 };
+    const ev = { seasonChanged: season !== prevSeason, withered: 0, rained: false, sprinklers: 0, made: runMachines(s) };
     if (ev.seasonChanged) {
       for (const t of s.farm) {
         if (t.c && CROP[t.c].season !== season) {
@@ -532,6 +591,10 @@ const Engine = ((D) => {
     }
     if (ev.rained) events.push({ icon: '💧', text: '비 덕분에 야외 밭 전체가 젖었어요.' });
     if (ev.sprinklers) events.push({ icon: '⛲', text: `스프링클러 ${ev.sprinklers}개가 물을 뿌렸어요.` });
+    const made = Object.keys(ev.made || {});
+    if (made.length) {
+      events.push({ icon: '🏺', text: `가공품이 완성돼 창고에 들어왔어요: ${made.map((id) => `${ITEM[id].name} ${ev.made[id]}개`).join(', ')}` });
+    }
     const sum = farmSummary(s);
     if (sum.ready) events.push({ icon: '🧺', text: `다 자란 작물이 ${sum.ready}칸 있어요.` });
     if (W.closed) events.push({ icon: '🔒', text: `${W.name} 때문에 오늘은 가게 문을 열 수 없어요.` });
@@ -564,12 +627,13 @@ const Engine = ((D) => {
       sprinklers: 0,
       shelf: [],
       lastPct: {},
-      up: { field: 0, can: 0, shelf: 0, sign: 0, greenhouse: 0 },
+      up: { field: 0, can: 0, shelf: 0, sign: 0, workshop: 0, greenhouse: 0 },
+      machines: [],
       today: null,
       morning: null,
       paidOffDay: null,
       over: null,
-      stats: { revenue: 0, sold: 0, customers: 0, bestDay: 0, harvested: 0, repaid: 0 },
+      stats: { revenue: 0, sold: 0, customers: 0, bestDay: 0, harvested: 0, repaid: 0, processed: 0 },
       history: [],
     };
     syncShelf(s);
@@ -578,22 +642,34 @@ const Engine = ((D) => {
     return s;
   }
 
+  // 예전 버전 저장을 지금 형식으로 바꾼다
+  function migrate(s) {
+    if (s && s.v === 1) {
+      s.machines = [];
+      s.up.workshop = 0;
+      s.stats.processed = 0;
+      s.v = 2;
+    }
+    return s;
+  }
+
   function isValidSave(s) {
     return !!s && s.v === SAVE_VERSION && Array.isArray(s.farm) && s.farm.length === FARM_W * FARM_W
-      && Array.isArray(s.gh) && typeof s.day === 'number' && typeof s.money === 'number';
+      && Array.isArray(s.gh) && Array.isArray(s.machines) && typeof s.day === 'number' && typeof s.money === 'number';
   }
 
   return {
-    CROP, UP, FARM_W, GH_W, B, repMult,
+    CROP, ITEM, ITEMS, UP, FARM_W, GH_W, B, repMult, productOf,
     rand, josa,
     seasonOf, dayInSeason, yearOf,
-    fieldSize, waterCost, shelfSlots, signBonus, hasGreenhouse,
+    fieldSize, waterCost, shelfSlots, signBonus, hasGreenhouse, machineCount,
+    loadMachine,
     areaTiles, areaWidth, isActive, activeIndices, isReady, isGrowing, neighbors,
     harvestsIfPlanted, plantCheck, act, farmSummary,
     buyChance, clampPct, priceOf, chanceFor, customerForecast, displayQty, wantWeight,
     setShelf, setShelfPrice, clearShelf, openShop,
     seedShopList, buySeeds, upgradeInfo, buyUpgrade, buySprinkler, repay,
-    sleep, newGame, isValidSave,
+    sleep, newGame, migrate, isValidSave,
   };
 })(typeof GameData !== 'undefined' ? GameData : require('./data.js'));
 

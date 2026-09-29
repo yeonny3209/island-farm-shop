@@ -17,6 +17,12 @@
     const fin = (code - 0xAC00) % 28;
     return w + (code >= 0xAC00 && code <= 0xD7A3 && fin !== 0 && fin !== 8 ? '으로' : '로');
   };
+  // 가공품은 병(🍯/🥫) 위에 원래 작물을 작게 겹쳐 그린다
+  const itemEmo = (id, cls = '') => {
+    const it = E.ITEM[id];
+    if (it.kind === 'crop') return emo(it.emoji, cls);
+    return `<span class="emo prod ${cls}" title="${it.name}">${it.emoji}<i>${E.CROP[it.crop].emoji}</i></span>`;
+  };
   const stars = (rep) => {
     const n = Math.max(0, Math.min(5, Math.round(rep / 20)));
     return `<span class="stars" aria-label="평판 ${Math.round(rep)}점">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`;
@@ -37,6 +43,7 @@
     openWarn: false,
     sleepWarn: false,
     selSlot: null,
+    jarPick: {},
     seedQty: {},
     allSeeds: false,
     repay: 0,
@@ -60,7 +67,7 @@
     try {
       const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return null;
-      const s = JSON.parse(raw);
+      const s = E.migrate(JSON.parse(raw));
       return E.isValidSave(s) ? s : null;
     } catch (err) { return null; }
   }
@@ -145,8 +152,8 @@
     main.innerHTML = `
       <div class="tabs" role="tablist" id="tabs">${tabsHtml()}</div>
       <section class="day">
-        <div class="stage">${ui.tab === 'shop' ? shopStage() : farmStage(ui.tab)}</div>
-        <aside class="side" id="side">${ui.tab === 'shop' ? shopSide() : farmSide(sum)}</aside>
+        <div class="stage">${ui.tab === 'shop' ? shopStage() : ui.tab === 'work' ? workStage() : farmStage(ui.tab)}</div>
+        <aside class="side" id="side">${ui.tab === 'shop' ? shopSide() : ui.tab === 'work' ? workSide() : farmSide(sum)}</aside>
       </section>`;
     renderDayBar(sum);
   }
@@ -158,7 +165,102 @@
     };
     const shown = S.shelf.filter((sl) => sl && S.stock[sl.id] > 0).length;
     const tab = (id, label, badge) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${ui.tab === id}">${label}${badge ? `<span class="count">${badge}</span>` : ''}</button>`;
-    return tab('farm', '🌾 밭', count('farm')) + tab('gh', '🏡 온실', count('gh')) + tab('shop', `🏪 가게 진열 <small>${shown}/${E.shelfSlots(S)}</small>`, 0);
+    const jars = E.machineCount(S);
+    const busy = S.machines.filter(Boolean).length;
+    return tab('farm', '🌾 밭', count('farm')) + tab('gh', '🏡 온실', count('gh'))
+      + tab('work', `🏺 공방${jars ? ` <small>${busy}/${jars}</small>` : ''}`, 0)
+      + tab('shop', `🏪 가게 진열 <small>${shown}/${E.shelfSlots(S)}</small>`, 0);
+  }
+
+  // ---------- 가공 공방 ----------
+  function jarHtml(m, i) {
+    if (m) {
+      const out = E.ITEM[E.productOf(m.c)];
+      const P = D.PROCESSES[E.CROP[m.c].proc];
+      const done = (P.days - m.d) / P.days;
+      return `<div class="jar busy">
+        <div class="jar-pot">${emo('🏺')}<span class="jar-in emo">${E.CROP[m.c].emoji}</span></div>
+        <div class="jar-body">
+          <b>${out.name} ×${m.n}</b>
+          <small>${m.d === 1 ? '내일 아침 완성' : `${m.d}일 뒤 아침 완성`} · 개당 ${out.base}G</small>
+          <div class="bar jarbar"><i style="width:${Math.max(8, done * 100)}%"></i></div>
+        </div>
+      </div>`;
+    }
+    const ids = Object.keys(S.stock).filter((id) => E.CROP[id] && S.stock[id] > 0)
+      .sort((a, b) => S.stock[b] - S.stock[a]);
+    if (!ids.length) {
+      return `<div class="jar empty"><div class="jar-pot">${emo('🏺')}</div>
+        <div class="jar-body"><b>빈 항아리</b><small>창고에 넣을 작물이 없어요</small></div></div>`;
+    }
+    const pick = ui.jarPick[i] || {};
+    const sel = ids.includes(pick.id) ? pick.id : ids[0];
+    const max = Math.min(B.procBatch, S.stock[sel]);
+    const qty = Math.max(1, Math.min(pick.qty || max, max));
+    const crop = E.CROP[sel];
+    const out = E.ITEM[E.productOf(sel)];
+    const P = D.PROCESSES[crop.proc];
+    const options = ids.map((id) => `<option value="${id}" ${id === sel ? 'selected' : ''}>${E.CROP[id].emoji} ${E.CROP[id].name} (창고 ${S.stock[id]}개)</option>`).join('');
+    return `<div class="jar empty">
+      <div class="jar-pot">${emo('🏺')}</div>
+      <div class="jar-body">
+        <b>빈 항아리</b>
+        <select id="jarsel-${i}" data-jarsel="${i}" aria-label="${i + 1}번 항아리에 넣을 작물">${options}</select>
+        <div class="jar-row">
+          <span class="stepper"><button data-jarstep="${i}" data-d="-1" aria-label="하나 빼기">−</button><output class="num">${qty}</output><button data-jarstep="${i}" data-d="1" aria-label="하나 더">+</button></span>
+          <button class="btn small primary" data-jarload="${i}">넣기</button>
+        </div>
+        <small class="jar-out">→ ${itemEmo(out.id)} ${out.name} ${qty}개 · 개당 ${out.base}G <s>${crop.base}G</s> · ${P.days}일</small>
+      </div>
+    </div>`;
+  }
+
+  function workshopHtml() {
+    const n = E.machineCount(S);
+    if (!n) {
+      const cost = E.upgradeInfo(S, 'workshop').next.cost;
+      return `<div class="locked-plot workshop-locked"><div>${emo('🏺')}아직 가공 공방이 없어요.<br>밤에 업그레이드에서 ${fmt(cost)}G에 지을 수 있어요.<br>
+        <small>과일은 잼, 채소는 피클이 되어 더 비싸게 팔려요.</small></div></div>`;
+    }
+    return `<div class="jars">${S.machines.map(jarHtml).join('')}</div>`;
+  }
+
+  function workStage() {
+    return `<div class="yard">
+      <div class="meadow-head"><h2>가공 공방</h2><span class="hint">항아리 하나에 같은 작물을 ${B.procBatch}개까지 넣어요</span></div>
+      ${workshopHtml()}
+    </div>`;
+  }
+
+  function recipeRows() {
+    return D.CROPS.map((c) => {
+      const out = E.ITEM[E.productOf(c.id)];
+      return `<tr><td>${emo(c.emoji)} ${c.name}</td><td>${c.base}G</td><td>${itemEmo(out.id)} ${out.name}</td><td>${out.base}G</td></tr>`;
+    }).join('');
+  }
+
+  function workSide() {
+    const prods = Object.keys(S.stock).filter((id) => E.ITEM[id].kind !== 'crop' && S.stock[id] > 0)
+      .map((id) => `<span class="chip">${itemEmo(id)} ${E.ITEM[id].name} <b>${S.stock[id]}</b></span>`).join('');
+    return `
+      <section class="panel"><h3>가공품 창고</h3><div class="summary">${prods || '<span class="empty-note">아직 가공품이 없어요.</span>'}</div></section>
+      <section class="panel"><h3>가공하는 법</h3>
+        <ul class="help" style="padding-left:18px;margin:0;font-size:13px;display:flex;flex-direction:column;gap:4px">
+          <li>과일은 ${D.PROCESSES.jam.emoji} 잼, 채소는 ${D.PROCESSES.pickle.emoji} 피클이 돼요. ${D.PROCESSES.jam.days}일 뒤 아침에 창고로 들어와요.</li>
+          <li>항아리에 넣는 데는 체력이 들지 않아요. 낮에도 밤에도 넣을 수 있어요.</li>
+          <li>가공품은 계절을 타지 않고 손님이 꾸준히 찾아요. 겨울에 특히 잘 팔려요.</li>
+          <li>팔고 남은 작물이나 지난 계절 작물을 넣어 두면 좋아요.</li>
+        </ul>
+      </section>
+      <section class="panel"><h3>가공품 가격표</h3>
+        <div class="crop-table-wrap"><table class="crop-table"><thead><tr><th>작물</th><th>기준가</th><th>가공품</th><th>기준가</th></tr></thead>
+        <tbody>${recipeRows()}</tbody></table></div>
+      </section>`;
+  }
+
+  function rerender() {
+    if (S.phase === 'day') renderDay();
+    else if (!ui.biz) renderNight();
   }
 
   function coverage(area) {
@@ -292,11 +394,11 @@
       return `<div class="slot empty ${ui.selSlot === i ? 'selected' : ''}" data-slot="${i}" role="button" tabindex="0">
         <div>${emo('🧺')}<div><b>빈 진열칸</b></div><small>창고의 작물을 끌어다 놓거나<br>눌러서 올리세요</small></div></div>`;
     }
-    const c = E.CROP[sl.id];
+    const c = E.ITEM[sl.id];
     const stock = S.stock[sl.id] || 0;
     const qty = E.displayQty(S, sl.id);
     return `<div class="slot" data-slot="${i}">
-      <div class="crate">${emo(c.emoji)}<div>
+      <div class="crate">${itemEmo(sl.id)}<div>
         <div class="cname">${c.name} ${sl.id === S.popular ? '<span class="popular-badge">인기</span>' : ''}</div>
         <div class="cmeta">${stock ? `진열 ${qty}개 · 창고 ${stock}개` : '창고에 없어서 오늘은 비어 있어요'}</div>
       </div></div>
@@ -324,14 +426,16 @@
 
   function shopSide() {
     const season = E.seasonOf(S.day);
+    const rank = (id) => (E.ITEM[id].season === season ? 2 : E.ITEM[id].kind !== 'crop' ? 1 : 0);
     const ids = Object.keys(S.stock).filter((id) => S.stock[id] > 0)
-      .sort((a, b) => (E.CROP[b].season === season) - (E.CROP[a].season === season) || E.CROP[b].base - E.CROP[a].base);
+      .sort((a, b) => rank(b) - rank(a) || E.ITEM[b].base - E.ITEM[a].base);
     const list = ids.length ? ids.map((id) => {
-      const c = E.CROP[id];
+      const c = E.ITEM[id];
       const shown = S.shelf.some((sl) => sl && sl.id === id);
-      const tags = [c.season === season ? '제철' : `${D.SEASONS[c.season].name} 작물`, id === S.popular ? '오늘 인기!' : ''].filter(Boolean).join(' · ');
+      const kind = c.kind !== 'crop' ? '가공품' : c.season === season ? '제철' : `${D.SEASONS[c.season].name} 작물`;
+      const tags = [kind, id === S.popular ? '오늘 인기!' : ''].filter(Boolean).join(' · ');
       return `<button class="stock ${shown ? 'shown' : ''}" draggable="true" data-stock="${id}">
-        ${emo(c.emoji)}<span>${c.name}<span class="meta">기준가 ${c.base}G · ${tags}</span></span><span class="cnt num">×${S.stock[id]}</span></button>`;
+        ${itemEmo(id)}<span>${c.name}<span class="meta">기준가 ${c.base}G · ${tags}</span></span><span class="cnt num">×${S.stock[id]}</span></button>`;
     }).join('') : '<p class="empty-note">창고가 비었어요. 밭에서 수확하면 여기에 쌓여요.</p>';
     return `
       <section class="panel"><h3>창고 <small>끌어서 진열대로</small></h3><div class="stocklist">${list}</div></section>
@@ -342,6 +446,7 @@
           <li>인기 작물은 40% 비싸게 받아도 기준가처럼 잘 팔려요.</li>
           <li>싸게 팔면 한 번에 여러 개 사 가요.</li>
           <li>비싸서 그냥 간 손님이 많으면 <b>평판</b>이 떨어지고, 내일 손님이 줄어요.</li>
+          <li>가공품(잼·피클)은 계절을 타지 않고 손님이 꾸준히 찾아요. 겨울엔 더 많이 찾아요.</li>
           <li>안 팔린 작물은 창고에 남아요. 상하지 않아요.</li>
         </ul>
       </section>`;
@@ -416,7 +521,7 @@
     if (!ui.paint) return;
     const changed = ui.paint.changed;
     ui.paint = null;
-    if (changed && S.phase === 'day' && ui.tab !== 'shop') {
+    if (changed && S.phase === 'day' && (ui.tab === 'farm' || ui.tab === 'gh')) {
       const sum = E.farmSummary(S);
       $('#side').innerHTML = farmSide(sum);
       $('#tabs').innerHTML = tabsHtml();
@@ -448,7 +553,7 @@
     const W = D.WEATHER[r.weather];
     const slots = r.slots.map((sl) => `
       <div class="scene-slot ${b.left[sl.i] ? '' : 'sold-out'}" data-sslot="${sl.i}">
-        ${emo(E.CROP[sl.id].emoji)}<span class="left num">×<span data-left="${sl.i}">${b.left[sl.i]}</span></span><br>
+        ${itemEmo(sl.id)}<span class="left num">×<span data-left="${sl.i}">${b.left[sl.i]}</span></span><br>
         <span class="ptag num">${sl.price}G</span>
       </div>`).join('');
     main.innerHTML = `<section class="biz">
@@ -545,21 +650,21 @@
         for (const v of c.visits) {
           move(posOf(v.slot));
           await bizWait(b, walk);
-          const cr = E.CROP[v.id];
+          const cr = E.ITEM[v.id];
           if (v.qty) {
-            say(`${emo(cr.emoji)}×${v.qty} +${fmt(v.pay)}G`, 'buy');
+            say(`${itemEmo(v.id)}×${v.qty} +${fmt(v.pay)}G`, 'buy');
             recordSale(b, c, v);
           } else {
             say(pickLine(['비싸요…', '너무 비싸!', '다음에 살게요', '음… 비싸네']), 'no');
-            logLine(`${c.face} ${cr.emoji} 비싸서 안 샀어요`, 'no');
+            logLine(`${c.face} ${cr.name} 비싸서 안 샀어요`, 'no');
           }
           await bizWait(b, 760);
         }
       } else {
         move({ x: sr.width * 0.45 + Math.random() * 60, y: floorY });
         await bizWait(b, walk);
-        say(`${emo(E.CROP[c.want].emoji)} 없네…`, 'no');
-        logLine(`${c.face} ${E.CROP[c.want].emoji} 찾다가 그냥 갔어요`, 'no');
+        say(`${itemEmo(c.want)} 없네…`, 'no');
+        logLine(`${c.face} ${E.ITEM[c.want].name} 찾다가 그냥 갔어요`, 'no');
         await bizWait(b, 760);
       }
       el.querySelectorAll('.bubble').forEach((x) => x.remove());
@@ -595,7 +700,7 @@
     $('#tRev').textContent = fmt(b.revenue);
     renderHud();
     const mood = v.mood === 'happy' ? ' 😊' : '';
-    logLine(`${c.face} ${E.CROP[v.id].emoji}×${v.qty} <b>+${fmt(v.pay)}G</b>${mood}`, 'buy');
+    logLine(`${c.face} ${itemEmo(v.id)}×${v.qty} <b>+${fmt(v.pay)}G</b>${mood}`, 'buy');
   }
 
   function logLine(html, cls) {
@@ -637,14 +742,14 @@
       body = '<div class="row"><span>진열한 작물이 없었어요</span><span>0G</span></div>';
     } else {
       body = r.lines.map((ln) => {
-        const c = E.CROP[ln.id];
+        const c = E.ITEM[ln.id];
         return ln.qty
-          ? `<div class="row"><span>${emo(c.emoji)} ${c.name} ×${ln.qty} @${ln.price}</span><span class="num">${fmt(ln.total)}</span></div>`
-          : `<div class="row note"><span>${emo(c.emoji)} ${c.name} @${ln.price}</span><span>안 팔림</span></div>`;
+          ? `<div class="row"><span>${itemEmo(ln.id)} ${c.name} ×${ln.qty} @${ln.price}</span><span class="num">${fmt(ln.total)}</span></div>`
+          : `<div class="row note"><span>${itemEmo(ln.id)} ${c.name} @${ln.price}</span><span>안 팔림</span></div>`;
       }).join('');
     }
-    const missing = Object.keys(r.missing || {}).map((id) => `${E.CROP[id].emoji}${r.missing[id]}`).join(' ');
-    const rejected = (r.lines || []).filter((ln) => ln.rejected).map((ln) => `${E.CROP[ln.id].emoji}${ln.rejected}`).join(' ');
+    const missing = Object.keys(r.missing || {}).map((id) => `${itemEmo(id)}${r.missing[id]}`).join(' ');
+    const rejected = (r.lines || []).filter((ln) => ln.rejected).map((ln) => `${itemEmo(ln.id)}${ln.rejected}`).join(' ');
     const rep = r.closed ? '' : `<div class="row"><span>가게 평판</span><span>${stars(S.rep)} ${r.repDelta > 0 ? '+' : ''}${r.repDelta}</span></div>`;
     const left = B.deadline - S.day;
     return `<div class="receipt">
@@ -758,7 +863,8 @@
     main.innerHTML = `<section class="night">
       <div>${receiptHtml()}</div>
       <div class="night-panels">
-        ${seedPanel()}
+        <div style="display:flex;flex-direction:column;gap:16px">${seedPanel()}${E.machineCount(S)
+          ? `<section class="panel"><h3>가공 공방 <small>팔고 남은 작물을 항아리에</small></h3>${workshopHtml()}</section>` : ''}</div>
         <div style="display:flex;flex-direction:column;gap:16px">${debtPanel()}${upgradePanel()}</div>
       </div>
     </section>`;
@@ -786,6 +892,7 @@
     save();
     if (S.over === 'fail') { render(); showFail(); return; }
     ui.tab = 'farm';
+    ui.jarPick = {};
     ui.seedQty = {};
     ui.repay = 0;
     ui.openWarn = false;
@@ -845,7 +952,7 @@
         <li>${emo('🏪')}<span><b>영업</b> — 손님이 오가며 사거나 그냥 가요.</span></li>
         <li>${emo('🌙')}<span><b>밤</b> — 정산하고, 씨앗과 업그레이드를 사고, 빚을 갚고 잠들어요.</span></li>
       </ul>
-      <p class="repay-help">한 계절은 ${B.seasonLength}일이에요. 겨울에는 온실이 없으면 야외 밭이 얼어요. 진행은 하루가 끝날 때마다 이 브라우저에 자동 저장돼요.</p>
+      <p class="repay-help">한 계절은 ${B.seasonLength}일이에요. 겨울에는 온실이 없으면 야외 밭이 얼어요. 가공 공방을 지으면 작물을 잼과 피클로 만들 수 있어요. 진행은 하루가 끝날 때마다 이 브라우저에 자동 저장돼요.</p>
       <div class="actions"><button class="btn big primary" data-act="closeModal">시작하기</button></div>
     </div>`, 'intro');
   }
@@ -869,6 +976,14 @@
         <li>가게 평판은 손님 수에 영향을 줘요. 적당한 값에 산 손님은 평판을 올리고, 비싸서 그냥 간 손님은 떨어뜨려요.</li>
         <li>비 오는 날은 손님이 줄고, 폭풍이 오는 날은 문을 열 수 없어요. 폭풍은 전날 예보로 알 수 있어요.</li>
       </ul>
+      <h3>가공 공방</h3>
+      <ul>
+        <li>밤에 “가공 공방”을 지으면 항아리가 생겨요 (2개 → 4개 → 6개). 🏺 공방 탭이나 밤 화면에서 항아리에 작물을 넣어요.</li>
+        <li>항아리 하나에 같은 작물을 ${B.procBatch}개까지 넣으면 ${D.PROCESSES.jam.days}일 뒤 아침에 가공품이 창고로 들어와요. 과일은 잼, 채소는 피클이 돼요.</li>
+        <li>가공품은 기준가가 더 높고 계절을 타지 않아요. 손님이 꾸준히 찾고, 겨울엔 더 많이 찾아요.</li>
+      </ul>
+      <div class="crop-table-wrap"><table class="crop-table"><thead><tr><th>작물</th><th>기준가</th><th>가공품</th><th>기준가</th></tr></thead>
+        <tbody>${recipeRows()}</tbody></table></div>
       <h3>작물 수치표</h3>
       <div class="crop-table-wrap"><table class="crop-table">
         <thead><tr><th></th><th>작물</th><th>계절</th><th>종류</th><th>씨앗</th><th>자라는 기간</th><th>기준가</th></tr></thead>
@@ -918,7 +1033,7 @@
     if (ui.biz) { ui.biz.finished = true; ui.biz.timers.forEach(clearTimeout); }
     clearSave();
     S = E.newGame((Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0);
-    Object.assign(ui, { tab: 'farm', tool: 'water', seed: null, paint: null, biz: null, openWarn: false, sleepWarn: false, selSlot: null, seedQty: {}, allSeeds: false, repay: 0 });
+    Object.assign(ui, { tab: 'farm', tool: 'water', seed: null, paint: null, biz: null, openWarn: false, sleepWarn: false, selSlot: null, jarPick: {}, seedQty: {}, allSeeds: false, repay: 0 });
     save();
     modalEl.hidden = true;
     ui.modal = null;
@@ -943,7 +1058,7 @@
   }
 
   document.addEventListener('click', (e) => {
-    const el = e.target.closest('[data-act],[data-tab],[data-tool],[data-seed],[data-stock],[data-slot],[data-clear],[data-step],[data-buyseed],[data-up],[data-repayset]');
+    const el = e.target.closest('[data-act],[data-tab],[data-tool],[data-seed],[data-stock],[data-slot],[data-clear],[data-step],[data-buyseed],[data-up],[data-repayset],[data-jarstep],[data-jarload]');
     if (!el) return;
     const d = el.dataset;
 
@@ -1027,6 +1142,25 @@
     if (d.repayset) {
       ui.repay = Number(d.repayset);
       renderNight();
+      return;
+    }
+    if (d.jarstep != null || d.jarload != null) {
+      const i = Number(d.jarstep != null ? d.jarstep : d.jarload);
+      const sel = main.querySelector(`[data-jarsel="${i}"]`);
+      if (!sel) return;
+      const id = sel.value;
+      const max = Math.min(B.procBatch, S.stock[id] || 0);
+      const cur = Math.max(1, Math.min((ui.jarPick[i] && ui.jarPick[i].id === id && ui.jarPick[i].qty) || max, max));
+      if (d.jarstep != null) {
+        ui.jarPick[i] = { id, qty: Math.max(1, Math.min(max, cur + Number(d.d))) };
+        rerender();
+        return;
+      }
+      const r = E.loadMachine(S, i, id, cur);
+      if (!r.ok) { toast(r.msg, true); return; }
+      delete ui.jarPick[i];
+      toast(`${E.CROP[id].name} ${cur}개를 항아리에 넣었어요. ${r.days}일 뒤 아침에 ${E.josa(E.ITEM[r.product].name, '이가')} 돼요.`);
+      rerender();
     }
   });
 
@@ -1046,7 +1180,12 @@
   });
 
   main.addEventListener('change', (e) => {
-    if (e.target.id === 'allSeeds') { ui.allSeeds = e.target.checked; renderNight(); }
+    if (e.target.id === 'allSeeds') { ui.allSeeds = e.target.checked; renderNight(); return; }
+    if (e.target.dataset.jarsel != null) {
+      const id = e.target.value;
+      ui.jarPick[Number(e.target.dataset.jarsel)] = { id, qty: Math.min(B.procBatch, S.stock[id] || 0) };
+      rerender();
+    }
   });
 
   // 밭 칠하기
@@ -1108,14 +1247,14 @@
     if (!slot) return;
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
-    if (id && E.CROP[id]) placeStock(id, Number(slot.dataset.slot));
+    if (id && E.ITEM[id]) placeStock(id, Number(slot.dataset.slot));
   });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && ui.modal && ['help', 'restart'].includes(ui.modal)) { closeModal(); return; }
     if (e.key === 'Enter' && e.target.matches && e.target.matches('.slot.empty')) { e.target.click(); return; }
-    if (ui.modal || S.phase !== 'day' || ui.tab === 'shop' || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.target.matches && e.target.matches('input')) return;
+    if (ui.modal || S.phase !== 'day' || (ui.tab !== 'farm' && ui.tab !== 'gh') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target.matches && e.target.matches('input, select')) return;
     const tool = TOOLS.find((t) => t.key === e.key);
     if (tool) { ui.tool = tool.id; renderDay(); }
   });

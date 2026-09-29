@@ -421,6 +421,54 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .stock.shown { background: #e8f3e2; }
 .stock.shown::after { content: "진열 중"; grid-column: 1 / -1; font-size: 11px; color: var(--good); margin-top: -4px; }
 
+/* ---------- 가공품 아이콘: 병 위에 원래 작물을 작게 ---------- */
+.emo.prod { position: relative; display: inline-block; }
+.emo.prod i {
+  position: absolute; right: -0.28em; bottom: -0.12em;
+  font-size: 0.55em; font-style: normal; line-height: 1;
+  filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
+}
+
+/* ---------- 가공 공방 (장독대) ---------- */
+.yard {
+  border-radius: 28px; padding: 16px;
+  background-color: #cbbfa9;
+  background-image:
+    radial-gradient(ellipse 34px 16px at 25% 30%, rgba(255, 255, 255, 0.18) 60%, transparent 62%),
+    radial-gradient(ellipse 40px 18px at 75% 70%, rgba(80, 60, 40, 0.12) 60%, transparent 62%);
+  background-size: 120px 80px;
+  box-shadow: inset 0 -6px 0 #a89a80, 0 0 0 6px rgba(255, 255, 255, 0.28), 0 18px 40px rgba(10, 50, 60, 0.3);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.yard .meadow-head { color: #3a2b1a; text-shadow: none; }
+.jars { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.jar {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center;
+  background: rgba(255, 250, 238, 0.95); border-radius: 16px; padding: 12px;
+  box-shadow: 0 3px 0 rgba(90, 70, 45, 0.3);
+}
+.jar.busy { background: #fff7e3; }
+.jar-pot { position: relative; font-size: 46px; line-height: 1; }
+.jar-in {
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+  font-size: 20px; filter: drop-shadow(0 0 2px #fff);
+}
+.jar.busy .jar-pot { animation: simmer 2.4s ease-in-out infinite; }
+@keyframes simmer { 50% { transform: rotate(-3deg); } }
+.jar-body { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.jar-body b { font-family: var(--f-display); font-weight: 400; font-size: 17px; line-height: 1.15; }
+.jar-body small { font-size: 12px; color: var(--ink-soft); }
+.jar-body s { color: var(--ink-faint); }
+.jar-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.jar-body select {
+  width: 100%; padding: 6px 8px; border-radius: 9px; border: 1px solid var(--line); background: #fff;
+  font-family: var(--f-body); font-size: 14px;
+}
+.bar.jarbar { background: rgba(120, 90, 50, 0.18); }
+.bar.jarbar > i { background: linear-gradient(90deg, #e0a53a, #f5cf6b); }
+.workshop-locked { width: 100%; aspect-ratio: auto; min-height: 220px; color: #3a2b1a; text-shadow: none; background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.35) 0 12px, rgba(255, 255, 255, 0.15) 12px 24px); }
+.side .crop-table td, .side .crop-table th { padding: 4px 6px; }
+
 /* ---------- 영업 ---------- */
 .biz { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
 .scene {

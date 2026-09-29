@@ -66,8 +66,8 @@ function choosePlant(s, area) {
 function stockShelf(s, st) {
   const season = E.seasonOf(s.day);
   const ids = Object.keys(s.stock).filter((id) => s.stock[id] > 0);
-  const rank = (id) => (id === s.popular ? 2 : 0) + (E.CROP[id].season === season ? 1 : 0);
-  ids.sort((a, b) => rank(b) - rank(a) || E.displayQty(s, b) * E.CROP[b].base - E.displayQty(s, a) * E.CROP[a].base);
+  const rank = (id) => (id === s.popular ? 2 : 0) + (E.ITEM[id].season === season ? 1 : E.ITEM[id].kind !== 'crop' ? 0.5 : 0);
+  ids.sort((a, b) => rank(b) - rank(a) || E.displayQty(s, b) * E.ITEM[b].base - E.displayQty(s, a) * E.ITEM[a].base);
   const n = E.shelfSlots(s);
   for (let k = 0; k < n; k++) s.shelf[k] = null;
   ids.slice(0, n).forEach((id, k) => {
@@ -80,10 +80,10 @@ function pricePct(s, st, id, shown) {
   if (typeof st.price === 'number') return st.price;
   // smart: 오늘 예상 수요에 맞춰 가격을 고른다. 남은 재고는 나중에 팔 수 있으니 기회비용을 뺀다.
   const fc = E.customerForecast(s).avg;
-  const W = D.CROPS.reduce((a, c) => a + E.wantWeight(s, c, shown.includes(c.id)), 0);
-  const share = E.wantWeight(s, E.CROP[id], true) / W;
+  const W = E.ITEMS.reduce((a, it) => a + E.wantWeight(s, it, shown.includes(it.id)), 0);
+  const share = E.wantWeight(s, E.ITEM[id], true) / W;
   const qty = E.displayQty(s, id);
-  const base = E.CROP[id].base;
+  const base = E.ITEM[id].base;
   let bestPct = 100;
   let bestVal = -Infinity;
   for (let pct = 60; pct <= 180; pct += 5) {
@@ -221,6 +221,15 @@ function nightDay(s, st) {
     if (item === 'spr') E.buySprinkler(s, 1); else E.buyUpgrade(s, item);
     st._p = (st._p || 0) + 1;
   }
+  if (st.process) {
+    for (let i = 0; i < E.machineCount(s); i++) {
+      if (s.machines[i]) continue;
+      const pool = Object.keys(s.stock).filter((id) => E.CROP[id] && s.stock[id] >= st.process);
+      if (!pool.length) break;
+      pool.sort((a, b) => s.stock[b] - s.stock[a]);
+      E.loadMachine(s, i, pool[0], Math.min(B.procBatch, s.stock[pool[0]]));
+    }
+  }
   const planDone = (st._p || 0) >= st.plan.length;
   if (s.debt > 0 && (planDone || lastCall || st.repayAlways)) {
     const r = s.day >= B.deadline ? 0 : reserve;
@@ -266,6 +275,9 @@ const STRATS = [
   { ...NORMAL, name: '보통+: 섞어 심기·가격 조절·기본 업그레이드' },
   { name: '능숙: 가치 계산·가격 조절·많은 업그레이드', plant: 'value', price: 'smart', plan: FULL, reserve: 300, stopInvest: 18, holdValue: 0.6 },
   { name: '능숙+온실', plant: 'value', price: 'smart', plan: GH, reserve: 300, stopInvest: 12, holdValue: 0.6 },
+  { ...NORMAL, name: '보통+ 가공 공방(항아리 2)', plan: ['field', 'shelf', 'workshop', 'sign', 'can', 'spr', 'spr'], process: 4 },
+  { ...NORMAL, name: '보통+ 가공 공방(항아리 4)', plan: ['field', 'shelf', 'workshop', 'sign', 'workshop', 'can', 'spr', 'spr'], process: 4 },
+  { name: '능숙+가공', plant: 'value', price: 'smart', plan: ['field', 'shelf', 'workshop', 'sign', 'can', 'spr', 'spr', 'field', 'workshop', 'sign', 'spr', 'spr', 'shelf'], reserve: 300, stopInvest: 18, holdValue: 0.6, process: 4 },
   { ...NORMAL, name: '빠른 작물만', plant: 'fast' },
   { ...NORMAL, name: '느린 작물 위주', plant: 'slow' },
   { ...NORMAL, name: '재수확 작물 위주', plant: 'regrow' },
@@ -289,7 +301,7 @@ if (traceIdx > 0) {
   const proto = STRATS[Number(process.argv[traceIdx + 1]) || 0];
   const st = Object.assign({}, proto, { plan: proto.plan.slice(), _p: 0, _rot: 0 });
   const s = E.newGame(4242);
-  const em = (o) => Object.keys(o).filter((k) => o[k] > 0).map((k) => E.CROP[k].emoji + o[k]).join(' ');
+  const em = (o) => Object.keys(o).filter((k) => o[k] > 0).map((k) => (E.ITEM[k] || E.CROP[k]).emoji + o[k]).join(' ');
   while (!s.over && !s.paidOffDay && s.day <= B.deadline) {
     farmDay(s, st);
     const planted = {};
