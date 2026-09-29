@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>작은 섬 농장 가게</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gaegu:wght@700&family=Gowun+Dodum&family=Jua&family=Nanum+Gothic+Coding:wght@400;700&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-time="day" data-season="0">
+  <div class="sky" aria-hidden="true">
+    <i data-t="morning"></i><i data-t="day"></i><i data-t="dusk"></i><i data-t="night"></i>
+  </div>
+
+  <div class="app">
+    <header class="hud" id="hud"></header>
+    <main id="main"></main>
+  </div>
+  <div class="actionbar" id="actionbar"></div>
+
+  <div class="modal-layer" id="modal" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
