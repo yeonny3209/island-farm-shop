@@ -6,8 +6,6 @@ const D = require('../js/data.js');
 const E = require('../js/engine.js');
 
 const B = D.BALANCE;
-const DIFF = process.env.DIFF || 'hard'; // DIFF=easy node tools/balance.js
-E.useDifficulty(DIFF);
 const RUNS = Number(process.argv[2]) || 300;
 const bySeason = (season, type) => D.CROPS.find((c) => c.season === season && c.type === type);
 
@@ -242,7 +240,7 @@ function nightDay(s, st) {
 // ---------- 실행 ----------
 function play(seed, proto, diag) {
   const st = Object.assign({}, proto, { plan: proto.plan.slice(), _p: 0, _rot: 0 });
-  const s = E.newGame(seed, DIFF);
+  const s = E.newGame(seed);
   while (!s.over && !s.paidOffDay && s.day <= B.deadline) {
     farmDay(s, st);
     stockShelf(s, st);
@@ -302,7 +300,7 @@ if (traceIdx > 0) {
   // node tools/balance.js 1 --trace 3  → 전략 3번 한 판을 하루씩 출력
   const proto = STRATS[Number(process.argv[traceIdx + 1]) || 0];
   const st = Object.assign({}, proto, { plan: proto.plan.slice(), _p: 0, _rot: 0 });
-  const s = E.newGame(4242, DIFF);
+  const s = E.newGame(4242);
   const em = (o) => Object.keys(o).filter((k) => o[k] > 0).map((k) => (E.ITEM[k] || E.CROP[k]).emoji + o[k]).join(' ');
   while (!s.over && !s.paidOffDay && s.day <= B.deadline) {
     farmDay(s, st);
@@ -338,7 +336,7 @@ if (diagIdx > 0) {
   process.exit(0);
 }
 
-console.log(`난이도: ${D.DIFFICULTIES[DIFF].name}  판 수: ${RUNS}  (빚 ${B.startDebt}G, 기한 ${B.deadline}일)\n`);
+console.log(`판 수: ${RUNS}  (빚 ${B.startDebt}G, 기한 ${B.deadline}일)\n`);
 console.log('전략'.padEnd(34) + '성공률  25%  중앙  75%   평균매출  실패 시 남은 빚');
 for (const proto of STRATS) {
   const days = [];

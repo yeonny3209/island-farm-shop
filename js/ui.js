@@ -48,8 +48,6 @@
     sleepWarn: false,
     selSlot: null,
     skip: { days: 1, open: true, harvest: true },
-    diff: 'normal',
-    diffCancel: true,
     savePending: null,
     saveCode: '',
     codeIn: '',
@@ -137,11 +135,9 @@
   }
 
   function describeState(s) {
-    E.useDifficulty(s.diff);
     const sz = D.SEASONS[E.seasonOf(s.day)];
     const when = s.phase === 'night' ? '밤' : '낮';
-    const text = `${D.DIFFICULTIES[s.diff].emoji} ${E.yearOf(s.day) > 1 ? `${E.yearOf(s.day)}년차 ` : ''}${sz.emoji} ${sz.name} ${E.dayInSeason(s.day)}일차 ${when} · ${s.day}일째`;
-    E.useDifficulty(S ? S.diff : s.diff);
+    const text = `${E.yearOf(s.day) > 1 ? `${E.yearOf(s.day)}년차 ` : ''}${sz.emoji} ${sz.name} ${E.dayInSeason(s.day)}일차 ${when} · ${s.day}일째`;
     return text;
   }
   function timeAgo(t) {
@@ -1049,7 +1045,6 @@
   function loadState(state) {
     if (ui.biz) { ui.biz.finished = true; ui.biz.timers.forEach(clearTimeout); ui.biz = null; }
     S = state;
-    E.useDifficulty(S.diff);
     Object.assign(ui, { tab: 'farm', paint: null, openWarn: false, sleepWarn: false, selSlot: null, jarPick: {}, seedQty: {}, repay: 0, savePending: null, saveCode: '', codeIn: '' });
     save();
     modalEl.hidden = true;
@@ -1256,39 +1251,14 @@
     openModal(`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="rTitle">
       <h2 id="rTitle">처음부터 다시 할까요?</h2>
       <p class="lead">지금까지의 진행과 저장이 지워지고 1일째부터 새로 시작해요.</p>
-      <div class="actions"><button class="btn" data-act="closeModal">계속하기</button><button class="btn primary" data-act="newGame">난이도 고르기</button></div>
+      <div class="actions"><button class="btn" data-act="closeModal">계속하기</button><button class="btn primary" data-act="newGame">처음부터 다시</button></div>
     </div>`, 'restart');
   }
 
-  function showDifficulty(canCancel) {
-    const cards = Object.keys(D.DIFFICULTIES).map((id) => {
-      const df = D.DIFFICULTIES[id];
-      const v = Object.assign({}, E.BASE_B, df.set);
-      return `<button class="diff-card" data-diff="${id}" aria-pressed="${ui.diff === id}">
-        <span class="diff-head">${emo(df.emoji)}<b>${df.name}</b>${id === 'normal' ? '<span class="rec">추천</span>' : ''}</span>
-        <span class="diff-desc">${df.desc}</span>
-        <span class="diff-facts">
-          <span>빚 <b class="num">${fmt(v.startDebt)}G</b></span>
-          <span>기한 <b class="num">${v.deadline}일</b></span>
-          <span>계절 <b class="num">${v.seasonLength}일</b></span>
-          <span>시작 돈 <b class="num">${fmt(v.startMoney)}G</b></span>
-          <span>체력 <b class="num">${v.maxEnergy}</b></span>
-        </span>
-      </button>`;
-    }).join('');
-    openModal(`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="dfTitle">
-      <h2 id="dfTitle">난이도를 골라요</h2>
-      <p class="lead">나중에 “처음부터 다시”로 언제든 다른 난이도로 새로 시작할 수 있어요.</p>
-      <div class="diff-cards">${cards}</div>
-      <div class="actions">${canCancel ? '<button class="btn" data-act="closeModal">취소</button>' : ''}<button class="btn big primary" data-act="startGame">${D.DIFFICULTIES[ui.diff].name}(으)로 시작</button></div>
-    </div>`, 'diff');
-  }
-
-  function newGame(diff) {
+  function newGame() {
     if (ui.biz) { ui.biz.finished = true; ui.biz.timers.forEach(clearTimeout); }
     clearSave();
-    ui.diffCancel = true;
-    S = E.newGame((Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0, diff || ui.diff);
+    S = E.newGame((Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0);
     Object.assign(ui, { tab: 'farm', tool: 'water', seed: null, paint: null, biz: null, openWarn: false, sleepWarn: false, selSlot: null, jarPick: {}, seedQty: {}, allSeeds: false, repay: 0 });
     save();
     modalEl.hidden = true;
@@ -1314,7 +1284,7 @@
   }
 
   document.addEventListener('click', (e) => {
-    const el = e.target.closest('[data-act],[data-tab],[data-tool],[data-seed],[data-stock],[data-slot],[data-clear],[data-step],[data-buyseed],[data-up],[data-repayset],[data-jarstep],[data-jarload],[data-diff],[data-skipdays],[data-saveslot],[data-loadslot],[data-delslot]');
+    const el = e.target.closest('[data-act],[data-tab],[data-tool],[data-seed],[data-stock],[data-slot],[data-clear],[data-step],[data-buyseed],[data-up],[data-repayset],[data-jarstep],[data-jarload],[data-skipdays],[data-saveslot],[data-loadslot],[data-delslot]');
     if (!el) return;
     const d = el.dataset;
 
@@ -1340,7 +1310,6 @@
       }
       return;
     }
-    if (d.diff) { ui.diff = d.diff; showDifficulty(ui.diffCancel); return; }
     if (d.skipdays) { ui.skip.days = Number(d.skipdays); showSkip(); return; }
 
     if (d.act) {
@@ -1377,8 +1346,7 @@
         }
         case 'help': showHelp(); return;
         case 'restart': showRestart(); return;
-        case 'newGame': ui.diffCancel = !S.over; showDifficulty(ui.diffCancel); return;
-        case 'startGame': newGame(ui.diff); return;
+        case 'newGame': newGame(); return;
         case 'closeModal': closeModal(); return;
         case 'open': {
           if (ui.modal) return;
@@ -1606,13 +1574,8 @@
   // ---------- 시작 ----------
   S = loadSave();
   if (!S) {
-    // 처음 실행: 배경 게임을 하나 깔고 난이도부터 고르게 한다
-    S = E.newGame(1, ui.diff);
-    render();
-    ui.diffCancel = false;
-    showDifficulty(false);
+    newGame();
   } else {
-    E.useDifficulty(S.diff);
     render();
     if (S.over === 'fail') showFail();
     else if (S.phase === 'day' && S.energy === B.maxEnergy) { ui.modal = 'morning'; setTime(); showMorning(); }

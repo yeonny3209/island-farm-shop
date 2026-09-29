@@ -116,8 +116,8 @@ const GameData = (() => {
   const BALANCE = {
     startMoney: 200,
     startDebt: 5000,
-    deadline: 40,
-    seasonLength: 10,
+    deadline: 48,
+    seasonLength: 12,
     startSeeds: { lettuce: 12, strawberry: 4 },
     startStock: { lettuce: 10 },
 
@@ -133,7 +133,7 @@ const GameData = (() => {
 
     shelfStart: 3,
     shelfCap: 10, // 진열대 한 칸에 올릴 수 있는 최대 수량
-    baseCustomers: 5,
+    baseCustomers: 6,
     customerJitter: 0.15,
     // 손님이 찾는 작물의 가중치 (계절별: 봄, 여름, 가을, 겨울)
     wantShown: [4, 4, 4, 3], // 진열된 제철 작물
@@ -158,25 +158,9 @@ const GameData = (() => {
     priceStep: 5,
   };
 
-  // 난이도: BALANCE 위에 덮어쓰는 값. 'hard' 는 처음 만든 수치 그대로다.
-  const DIFFICULTIES = {
-    easy: {
-      name: '쉬움', emoji: '🌱', desc: '느긋하게 배우는 섬 생활. 빚이 적고 기한이 넉넉해요.',
-      set: { startDebt: 3000, deadline: 60, seasonLength: 15, startMoney: 500, maxEnergy: 140, baseCustomers: 7 },
-    },
-    normal: {
-      name: '보통', emoji: '🌿', desc: '적당한 긴장감. 계절이 조금 길고 빚이 조금 적어요.',
-      set: { startDebt: 4000, deadline: 48, seasonLength: 12, startMoney: 300, maxEnergy: 120, baseCustomers: 6 },
-    },
-    hard: {
-      name: '어려움', emoji: '🔥', desc: '처음 기획 그대로. 40일 안에 빚 5,000G, 쉬는 날 없이 계산해야 해요.',
-      set: {},
-    },
-  };
-
   const FACES = ['🧑', '👩', '👨', '👵', '👴', '🧒', '👧', '👦', '🧔', '👱', '🙋', '🧑‍🦱', '👩‍🦰', '🧓'];
 
-  return { SEASONS, TYPES, CROPS, PROCESSES, DIFFICULTIES, WEATHER, WEATHER_TABLE, UPGRADES, BALANCE, FACES };
+  return { SEASONS, TYPES, CROPS, PROCESSES, WEATHER, WEATHER_TABLE, UPGRADES, BALANCE, FACES };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = GameData;

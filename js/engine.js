@@ -34,15 +34,6 @@ const Engine = ((D) => {
   const YEAR_FN = () => B.seasonLength * 4;
   const SAVE_VERSION = 3;
 
-  // ---------- 난이도 ----------
-  // B 는 하나뿐인 설정 객체라서, 게임을 시작하거나 불러올 때 이 함수로 난이도 값을 덮어쓴다.
-  const BASE_B = Object.assign({}, B);
-  function useDifficulty(id) {
-    const diff = D.DIFFICULTIES[id] ? id : 'hard';
-    Object.assign(B, BASE_B, D.DIFFICULTIES[diff].set);
-    return diff;
-  }
-
   // ---------- 난수 (mulberry32) ----------
   function rand(s) {
     s.rng = (s.rng + 0x6D2B79F5) | 0;
@@ -649,12 +640,10 @@ const Engine = ((D) => {
     return { day: s.day, weather: s.weather, forecast: s.forecast, popular: s.popular, events };
   }
 
-  function newGame(seed, diff) {
+  function newGame(seed) {
     seed = (seed >>> 0) || 1;
-    diff = useDifficulty(diff || 'hard');
     const s = {
       v: SAVE_VERSION,
-      diff,
       seed,
       rng: seed,
       day: 1,
@@ -697,7 +686,7 @@ const Engine = ((D) => {
       s.v = 2;
     }
     if (s && s.v === 2) {
-      s.diff = 'hard'; // 난이도 선택이 생기기 전 저장은 모두 처음 수치였다
+      delete s.diff;
       s.v = 3;
     }
     return s;
@@ -709,7 +698,7 @@ const Engine = ((D) => {
   }
 
   return {
-    useDifficulty, BASE_B, CROP, ITEM, ITEMS, UP, FARM_W, GH_W, B, repMult, productOf,
+    CROP, ITEM, ITEMS, UP, FARM_W, GH_W, B, repMult, productOf,
     rand, josa,
     seasonOf, dayInSeason, yearOf,
     fieldSize, waterCost, shelfSlots, signBonus, hasGreenhouse, machineCount,
