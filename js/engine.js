@@ -253,7 +253,9 @@ const Engine = ((D) => {
     const r = pct / 100;
     return id === s.popular ? r / B.popularTolerance : r;
   }
-  const chanceFor = (s, id, pct) => buyChance(effectiveRatio(s, id, pct));
+  // 질림: 최근에 많이 팔린 물건일수록 손님이 덜 산다 (오늘 팔린 만큼 + 며칠 전 판매의 남은 기억)
+  const satFactor = (s, id, today) => 1 / (1 + B.satK * ((s.sat[id] || 0) + (today || 0)));
+  const chanceFor = (s, id, pct) => buyChance(effectiveRatio(s, id, pct)) * satFactor(s, id, 0);
 
   const repMult = (s) => 1 + (s.rep - 50) * B.repEffect;
   const baseTraffic = (s) => (B.baseCustomers + signBonus(s)) * D.WEATHER[s.weather].customers * repMult(s);
@@ -344,7 +346,7 @@ const Engine = ((D) => {
 
       const tryBuy = (cust, sl, impulse) => {
         const r = effectiveRatio(s, sl.id, sl.pct);
-        const p = buyChance(r) * (impulse ? B.impulseFactor : 1);
+        const p = buyChance(r) * satFactor(s, sl.id, lines[sl.id].qty) * (impulse ? B.impulseFactor : 1);
         if (rand(s) < p) {
           let q = 1 + (rand(s) < 0.45 ? 1 : 0) + (rand(s) < 0.15 ? 1 : 0);
           if (r < 1 && rand(s) < (1 - r) * 2) q++; // 싸면 더 많이 산다
@@ -562,6 +564,13 @@ const Engine = ((D) => {
     for (const t of s.farm.concat(s.gh)) t.w = false;
 
     s.rep += (B.repStart - s.rep) * B.repDecay;
+    // 오늘 판 만큼 질림이 쌓이고, 하루가 지나면 조금씩 잊는다
+    const sold = (s.today && s.today.lines) || [];
+    for (const ln of sold) s.sat[ln.id] = (s.sat[ln.id] || 0) + ln.qty;
+    for (const id of Object.keys(s.sat)) {
+      s.sat[id] *= B.satDecay;
+      if (s.sat[id] < 0.5) delete s.sat[id];
+    }
     s.weather = s.forecast;
     s.forecast = rollWeather(s, s.day + 1);
     if (D.WEATHER[s.weather].waters) {
@@ -652,6 +661,7 @@ const Engine = ((D) => {
       debt: B.startDebt,
       energy: B.maxEnergy,
       rep: B.repStart,
+      sat: {},
       weather: 'sunny',
       forecast: 'sunny',
       popular: null,
@@ -685,6 +695,7 @@ const Engine = ((D) => {
       s.stats.processed = 0;
       s.v = 2;
     }
+    if (s && !s.sat) s.sat = {};
     if (s && s.v === 2) {
       delete s.diff;
       s.v = 3;
@@ -694,11 +705,11 @@ const Engine = ((D) => {
 
   function isValidSave(s) {
     return !!s && s.v === SAVE_VERSION && Array.isArray(s.farm) && s.farm.length === FARM_W * FARM_W
-      && Array.isArray(s.gh) && Array.isArray(s.machines) && typeof s.day === 'number' && typeof s.money === 'number';
+      && Array.isArray(s.gh) && Array.isArray(s.machines) && !!s.sat && typeof s.day === 'number' && typeof s.money === 'number';
   }
 
   return {
-    CROP, ITEM, ITEMS, UP, FARM_W, GH_W, B, repMult, productOf,
+    satFactor, CROP, ITEM, ITEMS, UP, FARM_W, GH_W, B, repMult, productOf,
     rand, josa,
     seasonOf, dayInSeason, yearOf,
     fieldSize, waterCost, shelfSlots, signBonus, hasGreenhouse, machineCount,

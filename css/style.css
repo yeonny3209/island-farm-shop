@@ -392,6 +392,8 @@ body[data-season="3"] .tile-info { color: var(--ink); text-shadow: none; }
 .crate .emo { font-size: 34px; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.2)); }
 .crate .cname { font-family: var(--f-display); font-size: 18px; color: #3a2513; line-height: 1.1; }
 .crate .cmeta { font-size: 12px; color: #4a2c0d; }
+.tired { margin-top: 4px; padding: 5px 8px; border-radius: 8px; background: #ffe9d6; color: #9a4a12; font-size: 12px; line-height: 1.35; }
+.tired small { font-size: 11px; color: #9a4a12; opacity: 0.85; }
 .popular-badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: #ffdf6b; color: #6a4300; font-family: var(--f-body); vertical-align: 2px; }
 .tag {
   background: var(--chalk-bg); color: var(--chalk); border-radius: 10px; padding: 8px 10px;

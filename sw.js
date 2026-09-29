@@ -1,7 +1,7 @@
 /* 오프라인 지원 (웹에서 홈 화면에 설치했을 때)
  * 화면(HTML)은 네트워크를 먼저 보고, 버전이 붙은 스크립트·스타일·아이콘·글꼴은 캐시를 먼저 본다.
  * index.html 의 ?v= 값을 올리면 아래 VERSION 도 같이 올린다. */
-const VERSION = '5';
+const VERSION = '6';
 const CACHE = `island-farm-shop-v${VERSION}`;
 const CORE = [
   './',

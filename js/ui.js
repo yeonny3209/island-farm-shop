@@ -477,6 +477,7 @@
       <div class="crate">${itemEmo(sl.id)}<div>
         <div class="cname">${c.name} ${sl.id === S.popular ? '<span class="popular-badge">인기</span>' : ''}</div>
         <div class="cmeta">${stock ? `진열 ${qty}개 · 창고 ${stock}개` : '창고에 없어서 오늘은 비어 있어요'}</div>
+        ${E.satFactor(S, sl.id, 0) < 0.75 ? `<div class="tired">😐 손님들이 이 물건에 질렸어요<br><small>구매 확률 ×${E.satFactor(S, sl.id, 0).toFixed(2)} · 며칠 쉬거나 다른 작물을 섞어 보세요</small></div>` : ''}
       </div></div>
       <div class="tag" data-tag="${i}">${tagInner(sl)}</div>
       <input type="range" id="price-${i}" data-price="${i}" min="${B.priceMin}" max="${B.priceMax}" step="${B.priceStep}" value="${sl.pct}" aria-label="${c.name} 가격 (기준가 대비 %)">
@@ -521,6 +522,7 @@
           <li>손님은 저마다 찾는 작물이 있어요. <b>제철 작물</b>과 <b>인기 작물</b>을 많이 찾아요.</li>
           <li>인기 작물은 40% 비싸게 받아도 기준가처럼 잘 팔려요.</li>
           <li>싸게 팔면 한 번에 여러 개 사 가요.</li>
+          <li>같은 물건을 계속 많이 팔면 손님이 <b>질려서</b> 덜 사요. 며칠 팔지 않으면 회복돼요. 여러 작물을 섞어 심고 가공품도 팔아 보세요.</li>
           <li>비싸서 그냥 간 손님이 많으면 <b>평판</b>이 떨어지고, 내일 손님이 줄어요.</li>
           <li>가공품(잼·피클)은 계절을 타지 않고 손님이 꾸준히 찾아요. 겨울엔 더 많이 찾아요.</li>
           <li>안 팔린 작물은 창고에 남아요. 상하지 않아요.</li>
@@ -1192,6 +1194,7 @@
       <h3>가게</h3>
       <ul>
         <li>기준가로 팔면 손님 80%가 사고, 1.5배면 30%만 사요. 진열대 한 칸에는 한 작물을 최대 ${B.shelfCap}개까지 올려요.</li>
+        <li>같은 물건만 계속 팔면 손님이 질려서 덜 사요. 여러 작물을 골고루 키워 팔아야 해요.</li>
         <li>손님은 제철 작물과 인기 작물을 많이 찾아요. 찾는 게 없으면 둘러보다 그냥 가기도 해요.</li>
         <li>가게 평판은 손님 수에 영향을 줘요. 적당한 값에 산 손님은 평판을 올리고, 비싸서 그냥 간 손님은 떨어뜨려요.</li>
         <li>비 오는 날은 손님이 줄고, 폭풍이 오는 날은 문을 열 수 없어요. 폭풍은 전날 예보로 알 수 있어요.</li>
