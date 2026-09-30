@@ -10,7 +10,7 @@ const Engine = ((D) => {
   const UP = {};
   D.UPGRADES.forEach((u) => { UP[u.id] = u; });
 
-  // 창고와 진열대에 놓이는 모든 물건: 작물 12종 + 가공품 12종
+  // 창고와 진열대에 놓이는 물건: 작물 40종 + 작물별 가공품 40종 + (섞어 만든) 모둠 가공품
   const ITEM = {};
   const ITEMS = [];
   const productOf = (cropId) => `${cropId}_${CROP[cropId].proc}`;
@@ -28,6 +28,40 @@ const Engine = ((D) => {
   });
   D.CROPS.forEach((c) => ITEMS.push(ITEM[c.id]));
   D.CROPS.forEach((c) => ITEMS.push(ITEM[productOf(c.id)]));
+
+  // 섞음 가공품은 재료에 따라 값이 달라서 'mix:종류:기준가' 꼴의 이름으로 그때그때 만든다.
+  function ensureItem(id) {
+    if (ITEM[id]) return ITEM[id];
+    const m = /^mix:(\w+):(\d+)$/.exec(id);
+    if (!m || !D.PROCESSES[m[1]] || !D.PROCESSES[m[1]].mix) return null;
+    const base = Number(m[2]);
+    const tier = base < 100 ? '소박한' : base < 250 ? '푸짐한' : '명품';
+    ITEM[id] = { id, emoji: D.PROCESSES[m[1]].emoji, kind: m[1], crop: null, season: null, days: D.PROCESSES[m[1]].days,
+      name: `${tier} ${D.PROCESSES[m[1]].name}`, base };
+    return ITEM[id];
+  }
+  function ensureItems(s) {
+    Object.keys(s.stock || {}).forEach(ensureItem);
+    (s.shelf || []).forEach((sl) => { if (sl) ensureItem(sl.id); });
+    (s.machines || []).forEach((m) => { if (m && m.out) ensureItem(m.out); });
+  }
+
+  // 재료 [{id, qty}] 로 무엇이 얼마나 만들어지는지: { item, n, days, types }
+  function previewProcess(items) {
+    const list = items.filter((x) => x && x.qty > 0 && CROP[x.id]);
+    if (!list.length) return null;
+    const n = list.reduce((a, x) => a + x.qty, 0);
+    if (list.length === 1) {
+      const item = ITEM[productOf(list[0].id)];
+      return { item, n, days: item.days, types: 1 };
+    }
+    const procs = new Set(list.map((x) => CROP[x.id].proc));
+    const kind = procs.size > 1 ? 'stew' : procs.has('jam') ? 'mixjam' : 'mixpickle';
+    const P = D.PROCESSES[kind];
+    const avg = list.reduce((a, x) => a + CROP[x.id].base * x.qty, 0) / n;
+    const base = Math.round(((avg * P.mult + P.add) * (1 + B.mixBonus * (list.length - 1))) / 10) * 10;
+    return { item: ensureItem(`mix:${kind}:${base}`), n, days: P.days, types: list.length };
+  }
 
   const FARM_W = 8; // 밭은 항상 8×8 배열로 저장하고, 확장 단계만큼만 쓴다
   const GH_W = B.greenhouseSize;
@@ -254,7 +288,7 @@ const Engine = ((D) => {
     return id === s.popular ? r / B.popularTolerance : r;
   }
   // 질림: 최근에 많이 팔린 물건일수록 손님이 덜 산다 (오늘 팔린 만큼 + 며칠 전 판매의 남은 기억)
-  const satFactor = (s, id, today) => 1 / (1 + B.satK * ((s.sat[id] || 0) + (today || 0)));
+  const satFactor = (s, id, today) => 1 / (1 + B.satK * Math.max(0, (s.sat[id] || 0) + (today || 0) - B.satFree));
   const chanceFor = (s, id, pct) => buyChance(effectiveRatio(s, id, pct)) * satFactor(s, id, 0);
 
   const repMult = (s) => 1 + (s.rep - 50) * B.repEffect;
@@ -342,7 +376,8 @@ const Engine = ((D) => {
       res.missing = {}; // 찾는 작물이 없어서 그냥 간 손님 (작물별)
 
       // 손님은 저마다 사고 싶은 작물이 있다: 제철 작물과 인기 작물을 많이 찾고, 진열된 다른 작물도 가끔 찾는다
-      const wants = ITEMS.map((it) => [it.id, wantWeight(s, it, slots.some((x) => x.id === it.id))]).filter((e) => e[1] > 0);
+      const wantable = ITEMS.concat(slots.filter((x) => !ITEMS.includes(ITEM[x.id])).map((x) => ITEM[x.id]));
+      const wants = wantable.map((it) => [it.id, wantWeight(s, it, slots.some((x) => x.id === it.id))]).filter((e) => e[1] > 0);
 
       const tryBuy = (cust, sl, impulse) => {
         const r = effectiveRatio(s, sl.id, sl.pct);
@@ -452,20 +487,26 @@ const Engine = ((D) => {
     while (s.machines.length < n) s.machines.push(null);
   }
 
-  // 낮이나 밤에 빈 항아리에 작물을 넣는다. 가공은 밤사이 진행되고 다 되면 아침에 창고로 들어온다.
-  function loadMachine(s, idx, cropId, qty) {
-    if (s.over || s.phase !== 'day' && s.phase !== 'night') return fail('지금은 항아리를 쓸 수 없어요.');
+  // 낮이나 밤에 빈 항아리에 작물 1~3가지를 합쳐 ${B.procBatch}개까지 넣는다.
+  // 가공은 밤사이 진행되고 다 되면 아침에 창고로 들어온다. items: [{ id, qty }]
+  function loadMachine(s, idx, items) {
+    if (s.over || (s.phase !== 'day' && s.phase !== 'night')) return fail('지금은 항아리를 쓸 수 없어요.');
     if (!(idx >= 0 && idx < machineCount(s))) return fail('없는 항아리예요.');
     if (s.machines[idx]) return fail('이미 가공 중인 항아리예요.');
-    const crop = CROP[cropId];
-    if (!crop) return fail('작물만 넣을 수 있어요.');
-    qty = Math.floor(qty);
-    if (!(qty > 0)) return fail('넣을 수량을 골라 주세요.');
-    if (qty > B.procBatch) return fail(`항아리 하나에 ${B.procBatch}개까지 넣을 수 있어요.`);
-    if ((s.stock[cropId] || 0) < qty) return fail(`창고에 ${josa(crop.name, '이가')} 모자라요.`);
-    s.stock[cropId] -= qty;
-    s.machines[idx] = { c: cropId, n: qty, d: D.PROCESSES[crop.proc].days };
-    return { ok: true, product: productOf(cropId), days: D.PROCESSES[crop.proc].days };
+    const list = (items || []).map((x) => ({ id: x.id, qty: Math.floor(x.qty) })).filter((x) => x.qty > 0);
+    if (!list.length) return fail('넣을 작물과 수량을 골라 주세요.');
+    if (list.some((x) => !CROP[x.id])) return fail('작물만 넣을 수 있어요.');
+    if (new Set(list.map((x) => x.id)).size !== list.length) return fail('같은 작물은 한 번만 고를 수 있어요.');
+    if (list.length > B.procKinds) return fail(`한 항아리에는 작물을 ${B.procKinds}가지까지 섞을 수 있어요.`);
+    const total = list.reduce((a, x) => a + x.qty, 0);
+    if (total > B.procBatch) return fail(`항아리 하나에 모두 합쳐 ${B.procBatch}개까지 넣을 수 있어요.`);
+    for (const x of list) {
+      if ((s.stock[x.id] || 0) < x.qty) return fail(`창고에 ${josa(CROP[x.id].name, '이가')} 모자라요.`);
+    }
+    const pv = previewProcess(list);
+    list.forEach((x) => { s.stock[x.id] -= x.qty; });
+    s.machines[idx] = { items: list.map((x) => ({ c: x.id, n: x.qty })), out: pv.item.id, n: pv.n, d: pv.days };
+    return { ok: true, product: pv.item.id, days: pv.days, types: pv.types };
   }
 
   function runMachines(s) {
@@ -474,9 +515,8 @@ const Engine = ((D) => {
       if (!m) return;
       m.d--;
       if (m.d > 0) return;
-      const pid = productOf(m.c);
-      s.stock[pid] = (s.stock[pid] || 0) + m.n;
-      made[pid] = (made[pid] || 0) + m.n;
+      s.stock[m.out] = (s.stock[m.out] || 0) + m.n;
+      made[m.out] = (made[m.out] || 0) + m.n;
       s.stats.processed += m.n;
       s.machines[i] = null;
     });
@@ -696,6 +736,11 @@ const Engine = ((D) => {
       s.v = 2;
     }
     if (s && !s.sat) s.sat = {};
+    if (s && Array.isArray(s.machines)) {
+      // 작물 하나만 넣던 예전 항아리 { c, n, d } 를 재료 목록 형식으로 바꾼다
+      s.machines = s.machines.map((m) => (m && !m.items ? { items: [{ c: m.c, n: m.n }], out: productOf(m.c), n: m.n, d: m.d } : m));
+      ensureItems(s);
+    }
     if (s && s.v === 2) {
       delete s.diff;
       s.v = 3;
@@ -709,7 +754,7 @@ const Engine = ((D) => {
   }
 
   return {
-    satFactor, CROP, ITEM, ITEMS, UP, FARM_W, GH_W, B, repMult, productOf,
+    satFactor, previewProcess, ensureItem, CROP, ITEM, ITEMS, UP, FARM_W, GH_W, B, repMult, productOf,
     rand, josa,
     seasonOf, dayInSeason, yearOf,
     fieldSize, waterCost, shelfSlots, signBonus, hasGreenhouse, machineCount,

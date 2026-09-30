@@ -25,7 +25,7 @@
   const itemEmo = (id, cls = '') => {
     const it = E.ITEM[id];
     if (it.kind === 'crop') return emo(it.emoji, cls);
-    return `<span class="emo prod ${cls}" title="${it.name}">${it.emoji}<i>${E.CROP[it.crop].emoji}</i></span>`;
+    return `<span class="emo prod ${cls}" title="${it.name}">${it.emoji}<i>${it.crop ? E.CROP[it.crop].emoji : '✨'}</i></span>`;
   };
   const stars = (rep) => {
     const n = Math.max(0, Math.min(5, Math.round(rep / 20)));
@@ -249,44 +249,74 @@
   }
 
   // ---------- 가공 공방 ----------
+  // 항아리 i 에 넣을 재료 목록을 창고 재고에 맞게 바로잡는다
+  function jarRows(i) {
+    const avail = Object.keys(S.stock).filter((id) => E.CROP[id] && S.stock[id] > 0).sort((a, b) => S.stock[b] - S.stock[a]);
+    let rows = (ui.jarPick[i] || []).filter((r) => avail.includes(r.id));
+    if (!rows.length && avail.length) rows = [{ id: avail[0], qty: Math.min(B.procBatch, S.stock[avail[0]]) }];
+    const seen = new Set();
+    const out = [];
+    let total = 0;
+    for (const r of rows) {
+      if (seen.has(r.id) || out.length >= B.procKinds || B.procBatch - total < 1) continue;
+      seen.add(r.id);
+      const q = Math.max(1, Math.min(r.qty, S.stock[r.id], B.procBatch - total));
+      out.push({ id: r.id, qty: q });
+      total += q;
+    }
+    ui.jarPick[i] = out;
+    return { rows: out, avail, total };
+  }
+
   function jarHtml(m, i) {
     if (m) {
-      const out = E.ITEM[E.productOf(m.c)];
-      const P = D.PROCESSES[E.CROP[m.c].proc];
-      const done = (P.days - m.d) / P.days;
+      const out = E.ITEM[m.out];
+      const total = Math.max(1, out.days || 2);
+      const done = (total - m.d) / total;
+      const ing = m.items.map((x) => E.CROP[x.c].emoji).join('');
+      const list = m.items.map((x) => `${E.CROP[x.c].emoji}${x.n}`).join(' ');
       return `<div class="jar busy">
-        <div class="jar-pot">${emo('🏺')}<span class="jar-in emo">${E.CROP[m.c].emoji}</span></div>
+        <div class="jar-pot">${emo('🏺')}<span class="jar-in emo ${m.items.length > 1 ? 'multi' : ''}">${ing}</span></div>
         <div class="jar-body">
           <b>${out.name} ×${m.n}</b>
-          <small>${m.d === 1 ? '내일 아침 완성' : `${m.d}일 뒤 아침 완성`} · 개당 ${out.base}G</small>
+          <small>${list} · ${m.d === 1 ? '내일 아침 완성' : `${m.d}일 뒤 아침 완성`} · 개당 ${out.base}G</small>
           <div class="bar jarbar"><i style="width:${Math.max(8, done * 100)}%"></i></div>
         </div>
       </div>`;
     }
-    const ids = Object.keys(S.stock).filter((id) => E.CROP[id] && S.stock[id] > 0)
-      .sort((a, b) => S.stock[b] - S.stock[a]);
-    if (!ids.length) {
+    const { rows, avail, total } = jarRows(i);
+    if (!rows.length) {
       return `<div class="jar empty"><div class="jar-pot">${emo('🏺')}</div>
         <div class="jar-body"><b>빈 항아리</b><small>창고에 넣을 작물이 없어요</small></div></div>`;
     }
-    const pick = ui.jarPick[i] || {};
-    const sel = ids.includes(pick.id) ? pick.id : ids[0];
-    const max = Math.min(B.procBatch, S.stock[sel]);
-    const qty = Math.max(1, Math.min(pick.qty || max, max));
-    const crop = E.CROP[sel];
-    const out = E.ITEM[E.productOf(sel)];
-    const P = D.PROCESSES[crop.proc];
-    const options = ids.map((id) => `<option value="${id}" ${id === sel ? 'selected' : ''}>${E.CROP[id].emoji} ${E.CROP[id].name} (창고 ${S.stock[id]}개)</option>`).join('');
+    const used = new Set(rows.map((r) => r.id));
+    const rowHtml = rows.map((r, k) => {
+      const opts = avail.filter((id) => id === r.id || !used.has(id))
+        .map((id) => `<option value="${id}" ${id === r.id ? 'selected' : ''}>${E.CROP[id].emoji} ${E.CROP[id].name} (창고 ${S.stock[id]})</option>`).join('');
+      const maxQ = Math.min(S.stock[r.id], r.qty + (B.procBatch - total));
+      return `<div class="jar-ing">
+        <select id="jarsel-${i}-${k}" data-jarsel="${i}:${k}" aria-label="${i + 1}번 항아리 재료 ${k + 1}">${opts}</select>
+        <span class="stepper"><button data-jarstep="${i}:${k}" data-d="-1" aria-label="하나 빼기" ${r.qty <= 1 ? 'disabled' : ''}>−</button><output class="num">${r.qty}</output><button data-jarstep="${i}:${k}" data-d="1" aria-label="하나 더" ${r.qty >= maxQ ? 'disabled' : ''}>+</button></span>
+        ${rows.length > 1 ? `<button class="icon-x" data-jarrm="${i}:${k}" aria-label="재료 빼기">✕</button>` : ''}
+      </div>`;
+    }).join('');
+    const canAdd = rows.length < B.procKinds && avail.some((id) => !used.has(id));
+    const pv = E.previewProcess(rows);
+    const apart = rows.reduce((a, r) => a + r.qty * E.ITEM[E.productOf(r.id)].base, 0);
+    const mixed = pv.n * pv.item.base;
+    const cmp = pv.types > 1
+      ? `<small class="jar-cmp">따로 가공하면 <s>${fmt(apart)}G</s> → 섞으면 <b>${fmt(mixed)}G</b> (+${Math.round(((mixed - apart) / apart) * 100)}%)</small>` : '';
     return `<div class="jar empty">
       <div class="jar-pot">${emo('🏺')}</div>
       <div class="jar-body">
-        <b>빈 항아리</b>
-        <select id="jarsel-${i}" data-jarsel="${i}" aria-label="${i + 1}번 항아리에 넣을 작물">${options}</select>
+        <b>빈 항아리 <small class="cap">${total}/${B.procBatch}개</small></b>
+        ${rowHtml}
         <div class="jar-row">
-          <span class="stepper"><button data-jarstep="${i}" data-d="-1" aria-label="하나 빼기">−</button><output class="num">${qty}</output><button data-jarstep="${i}" data-d="1" aria-label="하나 더">+</button></span>
+          ${canAdd ? `<button class="btn small" data-jaradd="${i}">＋ 작물 섞기 (${rows.length}/${B.procKinds}종)</button>` : `<span class="cap">${rows.length}/${B.procKinds}종</span>`}
           <button class="btn small primary" data-jarload="${i}">넣기</button>
         </div>
-        <small class="jar-out">→ ${itemEmo(out.id)} ${out.name} ${qty}개 · 개당 ${out.base}G <s>${crop.base}G</s> · ${P.days}일</small>
+        <small class="jar-out">→ ${itemEmo(pv.item.id)} ${pv.item.name} ${pv.n}개 · 개당 ${pv.item.base}G · ${pv.days}일</small>
+        ${cmp}
       </div>
     </div>`;
   }
@@ -296,14 +326,14 @@
     if (!n) {
       const cost = E.upgradeInfo(S, 'workshop').next.cost;
       return `<div class="locked-plot workshop-locked"><div>${emo('🏺')}아직 가공 공방이 없어요.<br>밤에 업그레이드에서 ${fmt(cost)}G에 지을 수 있어요.<br>
-        <small>과일은 잼, 채소는 피클이 되어 더 비싸게 팔려요.</small></div></div>`;
+        <small>과일은 잼, 채소는 피클이 되고, 여러 작물을 섞으면 더 비싸게 팔려요.</small></div></div>`;
     }
     return `<div class="jars">${S.machines.map(jarHtml).join('')}</div>`;
   }
 
   function workStage() {
     return `<div class="yard">
-      <div class="meadow-head"><h2>가공 공방</h2><span class="hint">항아리 하나에 같은 작물을 ${B.procBatch}개까지 넣어요</span></div>
+      <div class="meadow-head"><h2>가공 공방</h2><span class="hint">항아리 하나에 작물 ${B.procKinds}가지까지 섞어 ${B.procBatch}개를 넣어요</span></div>
       ${workshopHtml()}
     </div>`;
   }
@@ -323,14 +353,16 @@
       <section class="panel"><h3>가공하는 법</h3>
         <ul class="help" style="padding-left:18px;margin:0;font-size:13px;display:flex;flex-direction:column;gap:4px">
           <li>과일은 ${D.PROCESSES.jam.emoji} 잼, 채소는 ${D.PROCESSES.pickle.emoji} 피클이 돼요. ${D.PROCESSES.jam.days}일 뒤 아침에 창고로 들어와요.</li>
+          <li><b>작물을 ${B.procKinds}가지까지 섞을 수 있어요.</b> 과일끼리는 모둠 잼, 채소끼리는 모둠 피클, 과일과 채소를 섞으면 ${D.PROCESSES.stew.emoji} 가든 스튜가 돼요. 종류가 하나 늘 때마다 값이 ${Math.round(B.mixBonus * 100)}%씩 올라요. (한 항아리에 모두 합쳐 ${B.procBatch}개)</li>
           <li>항아리에 넣는 데는 체력이 들지 않아요. 낮에도 밤에도 넣을 수 있어요.</li>
           <li>가공품은 계절을 타지 않고 손님이 꾸준히 찾아요. 겨울에 특히 잘 팔려요.</li>
           <li>팔고 남은 작물이나 지난 계절 작물을 넣어 두면 좋아요.</li>
         </ul>
       </section>
       <section class="panel"><h3>가공품 가격표</h3>
+        <details><summary>작물 40종 가격표 보기</summary>
         <div class="crop-table-wrap"><table class="crop-table"><thead><tr><th>작물</th><th>기준가</th><th>가공품</th><th>기준가</th></tr></thead>
-        <tbody>${recipeRows()}</tbody></table></div>
+        <tbody>${recipeRows()}</tbody></table></div></details>
       </section>`;
   }
 
@@ -522,7 +554,7 @@
           <li>손님은 저마다 찾는 작물이 있어요. <b>제철 작물</b>과 <b>인기 작물</b>을 많이 찾아요.</li>
           <li>인기 작물은 40% 비싸게 받아도 기준가처럼 잘 팔려요.</li>
           <li>싸게 팔면 한 번에 여러 개 사 가요.</li>
-          <li>같은 물건을 계속 많이 팔면 손님이 <b>질려서</b> 덜 사요. 며칠 팔지 않으면 회복돼요. 여러 작물을 섞어 심고 가공품도 팔아 보세요.</li>
+          <li>같은 물건을 <b>4개째 팔 때부터</b> 손님이 질려서 덜 사요. 며칠 팔지 않으면 회복돼요. 여러 작물을 섞어 심고 가공품도 팔아 보세요.</li>
           <li>비싸서 그냥 간 손님이 많으면 <b>평판</b>이 떨어지고, 내일 손님이 줄어요.</li>
           <li>가공품(잼·피클)은 계절을 타지 않고 손님이 꾸준히 찾아요. 겨울엔 더 많이 찾아요.</li>
           <li>안 팔린 작물은 창고에 남아요. 상하지 않아요.</li>
@@ -1194,7 +1226,7 @@
       <h3>가게</h3>
       <ul>
         <li>기준가로 팔면 손님 80%가 사고, 1.5배면 30%만 사요. 진열대 한 칸에는 한 작물을 최대 ${B.shelfCap}개까지 올려요.</li>
-        <li>같은 물건만 계속 팔면 손님이 질려서 덜 사요. 여러 작물을 골고루 키워 팔아야 해요.</li>
+        <li>같은 물건을 4개째 팔 때부터 손님이 질려서 덜 사요. 여러 작물을 골고루 키워 팔아야 해요.</li>
         <li>손님은 제철 작물과 인기 작물을 많이 찾아요. 찾는 게 없으면 둘러보다 그냥 가기도 해요.</li>
         <li>가게 평판은 손님 수에 영향을 줘요. 적당한 값에 산 손님은 평판을 올리고, 비싸서 그냥 간 손님은 떨어뜨려요.</li>
         <li>비 오는 날은 손님이 줄고, 폭풍이 오는 날은 문을 열 수 없어요. 폭풍은 전날 예보로 알 수 있어요.</li>
@@ -1208,7 +1240,8 @@
       <h3>가공 공방</h3>
       <ul>
         <li>밤에 “가공 공방”을 지으면 항아리가 생겨요 (2개 → 4개 → 6개). 🏺 공방 탭이나 밤 화면에서 항아리에 작물을 넣어요.</li>
-        <li>항아리 하나에 같은 작물을 ${B.procBatch}개까지 넣으면 ${D.PROCESSES.jam.days}일 뒤 아침에 가공품이 창고로 들어와요. 과일은 잼, 채소는 피클이 돼요.</li>
+        <li>항아리 하나에 작물을 ${B.procKinds}가지까지 섞어 모두 합쳐 ${B.procBatch}개를 넣으면 ${D.PROCESSES.jam.days}일 뒤 아침에 가공품이 창고로 들어와요. 한 가지만 넣으면 딸기잼·상추 피클처럼, 섞으면 모둠 잼·모둠 피클·가든 스튜가 돼요.</li>
+        <li>섞는 종류가 하나 늘 때마다 값이 ${Math.round(B.mixBonus * 100)}%씩 올라요.</li>
         <li>가공품은 기준가가 더 높고 계절을 타지 않아요. 손님이 꾸준히 찾고, 겨울엔 더 많이 찾아요.</li>
       </ul>
       <div class="crop-table-wrap"><table class="crop-table"><thead><tr><th>작물</th><th>기준가</th><th>가공품</th><th>기준가</th></tr></thead>
@@ -1287,7 +1320,7 @@
   }
 
   document.addEventListener('click', (e) => {
-    const el = e.target.closest('[data-act],[data-tab],[data-tool],[data-seed],[data-stock],[data-slot],[data-clear],[data-step],[data-buyseed],[data-up],[data-repayset],[data-jarstep],[data-jarload],[data-skipdays],[data-saveslot],[data-loadslot],[data-delslot]');
+    const el = e.target.closest('[data-act],[data-tab],[data-tool],[data-seed],[data-stock],[data-slot],[data-clear],[data-step],[data-buyseed],[data-up],[data-repayset],[data-jarstep],[data-jarload],[data-jaradd],[data-jarrm],[data-skipdays],[data-saveslot],[data-loadslot],[data-delslot]');
     if (!el) return;
     const d = el.dataset;
 
@@ -1427,22 +1460,39 @@
       renderNight();
       return;
     }
-    if (d.jarstep != null || d.jarload != null) {
-      const i = Number(d.jarstep != null ? d.jarstep : d.jarload);
-      const sel = main.querySelector(`[data-jarsel="${i}"]`);
-      if (!sel) return;
-      const id = sel.value;
-      const max = Math.min(B.procBatch, S.stock[id] || 0);
-      const cur = Math.max(1, Math.min((ui.jarPick[i] && ui.jarPick[i].id === id && ui.jarPick[i].qty) || max, max));
+    if (d.jarstep != null || d.jarload != null || d.jaradd != null || d.jarrm != null) {
+      const ref = String(d.jarstep != null ? d.jarstep : d.jarload != null ? d.jarload : d.jaradd != null ? d.jaradd : d.jarrm);
+      const [ii, kk] = ref.split(':').map(Number);
+      const info = jarRows(ii);
+      const rows = info.rows.map((r) => Object.assign({}, r));
       if (d.jarstep != null) {
-        ui.jarPick[i] = { id, qty: Math.max(1, Math.min(max, cur + Number(d.d))) };
+        rows[kk].qty = Math.max(1, rows[kk].qty + Number(d.d));
+        ui.jarPick[ii] = rows;
         rerender();
         return;
       }
-      const r = E.loadMachine(S, i, id, cur);
+      if (d.jarrm != null) {
+        rows.splice(kk, 1);
+        ui.jarPick[ii] = rows;
+        rerender();
+        return;
+      }
+      if (d.jaradd != null) {
+        const free = info.avail.find((id) => !rows.some((r) => r.id === id));
+        if (free) {
+          // 자리가 없으면 가장 많이 넣은 재료에서 하나 덜어 낸다
+          if (rows.reduce((a, r) => a + r.qty, 0) >= B.procBatch) rows.sort((a, b) => b.qty - a.qty)[0].qty -= 1;
+          rows.push({ id: free, qty: 1 });
+        }
+        ui.jarPick[ii] = rows;
+        rerender();
+        return;
+      }
+      const r = E.loadMachine(S, ii, rows);
       if (!r.ok) { toast(r.msg, true); return; }
-      delete ui.jarPick[i];
-      toast(`${E.CROP[id].name} ${cur}개를 항아리에 넣었어요. ${r.days}일 뒤 아침에 ${E.josa(E.ITEM[r.product].name, '이가')} 돼요.`);
+      delete ui.jarPick[ii];
+      const it = E.ITEM[r.product];
+      toast(`${rows.map((x) => `${E.CROP[x.id].name} ${x.qty}개`).join(' + ')}를 항아리에 넣었어요. ${r.days}일 뒤 아침에 ${E.josa(it.name, '이가')} 돼요.`);
       rerender();
     }
   });
@@ -1465,8 +1515,10 @@
   main.addEventListener('change', (e) => {
     if (e.target.id === 'allSeeds') { ui.allSeeds = e.target.checked; renderNight(); return; }
     if (e.target.dataset.jarsel != null) {
-      const id = e.target.value;
-      ui.jarPick[Number(e.target.dataset.jarsel)] = { id, qty: Math.min(B.procBatch, S.stock[id] || 0) };
+      const [ii, kk] = e.target.dataset.jarsel.split(':').map(Number);
+      const rows = jarRows(ii).rows.map((r) => Object.assign({}, r));
+      rows[kk] = { id: e.target.value, qty: Math.min(rows[kk].qty, S.stock[e.target.value] || 1) };
+      ui.jarPick[ii] = rows;
       rerender();
     }
   });

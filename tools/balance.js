@@ -116,6 +116,14 @@ function seedChoice(s, st, day, area) {
     case 'fast': return ok(fast) ? fast.id : null;
     case 'slow': return ok(slow) ? slow.id : (ok(fast) ? fast.id : null);
     case 'regrow': return E.harvestsIfPlanted(regrow.id, day) >= 2 ? regrow.id : (ok(fast) ? fast.id : null);
+    case 'spread': {
+      // 계절 작물을 골고루 돌려 심는다 (st.kinds 가지)
+      const pool = D.CROPS.filter((c) => c.season === season && E.harvestsIfPlanted(c.id, day) > 0);
+      if (!pool.length) return null;
+      st._rot = (st._rot || 0) + 1;
+      const use = pool.slice(0, st.kinds || pool.length);
+      return use[st._rot % use.length].id;
+    }
     case 'mix': {
       if (k <= 2) {
         st._rot = (st._rot || 0) + 1;
@@ -227,7 +235,7 @@ function nightDay(s, st) {
       const pool = Object.keys(s.stock).filter((id) => E.CROP[id] && s.stock[id] >= st.process);
       if (!pool.length) break;
       pool.sort((a, b) => s.stock[b] - s.stock[a]);
-      E.loadMachine(s, i, pool[0], Math.min(B.procBatch, s.stock[pool[0]]));
+      E.loadMachine(s, i, [{ id: pool[0], qty: Math.min(B.procBatch, s.stock[pool[0]]) }]);
     }
   }
   const planDone = (st._p || 0) >= st.plan.length;
@@ -278,6 +286,9 @@ const STRATS = [
   { ...NORMAL, name: '보통+ 가공 공방(항아리 2)', plan: ['field', 'shelf', 'workshop', 'sign', 'can', 'spr', 'spr'], process: 4 },
   { ...NORMAL, name: '보통+ 가공 공방(항아리 4)', plan: ['field', 'shelf', 'workshop', 'sign', 'workshop', 'can', 'spr', 'spr'], process: 4 },
   { name: '능숙+가공', plant: 'value', price: 'smart', plan: ['field', 'shelf', 'workshop', 'sign', 'can', 'spr', 'spr', 'field', 'workshop', 'sign', 'spr', 'spr', 'shelf'], reserve: 300, stopInvest: 18, holdValue: 0.6, process: 4 },
+  { ...NORMAL, name: '골고루 4종 심기', plant: 'spread', kinds: 4 },
+  { ...NORMAL, name: '골고루 6종 심기', plant: 'spread', kinds: 6 },
+  { ...NORMAL, name: '골고루 6종 + 공방2', plant: 'spread', kinds: 6, plan: ['field', 'shelf', 'workshop', 'sign', 'can', 'spr', 'spr', 'shelf'], process: 3 },
   { ...NORMAL, name: '빠른 작물만', plant: 'fast' },
   { ...NORMAL, name: '느린 작물 위주', plant: 'slow' },
   { ...NORMAL, name: '재수확 작물 위주', plant: 'regrow' },
